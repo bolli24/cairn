@@ -36,6 +36,10 @@
             .url = "git+https://github.com/floooh/sokol-zig.git#baa842af7081c0d26d94847c5ecb398d8c5005cb",
             .hash = "sokol-0.1.0-pb1HK_-oNgARi7JDvtvcu9fo8-5ArHCZ3u2bcBsFsu0y",
         },
+        .zalgebra = .{
+            .url = "git+https://github.com/kooparse/zalgebra.git#fe19b7816f03d86d56d4fa62f943664edf5d367f",
+            .hash = "zalgebra-0.0.0-aaiVSrp2AQBLjd3lvhR0ILaVDHeqOpwNFCp0ZJHj0xhk",
+        },
     },
     .paths = .{
         "build.zig",

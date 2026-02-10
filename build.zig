@@ -1,4 +1,5 @@
 const std = @import("std");
+const sokol = @import("sokol");
 
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
@@ -6,7 +7,7 @@ const std = @import("std");
 // for defining build steps and express dependencies between them, allowing the
 // build runner to parallelize the build automatically (and the cache system to
 // know when a step doesn't need to be re-run).
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allow the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -46,6 +47,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const dep_zalgebra = b.dependency("zalgebra", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business
@@ -62,6 +68,11 @@ pub fn build(b: *std.Build) void {
     //
     // If neither case applies to you, feel free to delete the declaration you
     // don't need and to put everything under a single module.
+
+    var shader_module = try createShaderModule(b, dep_sokol);
+
+    shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
+
     const exe = b.addExecutable(.{
         .name = "voxel_zig",
         .root_module = b.createModule(.{
@@ -81,6 +92,14 @@ pub fn build(b: *std.Build) void {
                 .{
                     .name = "sokol",
                     .module = dep_sokol.module("sokol"),
+                },
+                .{
+                    .name = "zalgebra",
+                    .module = dep_zalgebra.module("zalgebra"),
+                },
+                .{
+                    .name = "shader",
+                    .module = shader_module,
                 },
             },
         }),
@@ -156,4 +175,21 @@ pub fn build(b: *std.Build) void {
     //
     // Lastly, the Zig build system is relatively simple and self-contained,
     // and reading its source code will allow you to master it.
+}
+
+fn createShaderModule(b: *std.Build, dep_sokol: *std.Build.Dependency) !*std.Build.Module {
+    const mod_sokol = dep_sokol.module("sokol");
+    const dep_shdc = dep_sokol.builder.dependency("shdc", .{});
+    return sokol.shdc.createModule(b, "shader", mod_sokol, .{
+        .shdc_dep = dep_shdc,
+        .input = "src/shader.glsl",
+        .output = "shader.zig",
+        .slang = .{
+            .glsl410 = true,
+            .glsl300es = true,
+            .hlsl4 = true,
+            .metal_macos = true,
+            .wgsl = true,
+        },
+    });
 }
