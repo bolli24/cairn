@@ -19,13 +19,19 @@ var gpa: std.heap.DebugAllocator(.{}) = .init;
 
 const MOUSE_ROTATE_SPEED = 0.2;
 
+const Transform = struct {
+    position: Vec3 = .zero(),
+    rotation: Quat = .identity(),
+    scale: Vec3 = .one(),
+};
+
 const Mesh = struct {
     const Self = @This();
     vertices: std.ArrayList(f32) = .empty,
     indices: std.ArrayList(u16) = .empty,
     vbuf: sg.Buffer = .{},
     ibuf: sg.Buffer = .{},
-    pos: Vec3 = .zero(),
+    transform: Transform = .{},
 
     fn init(vertices: []const f32, indices: []const u16) !Self {
         var self: Self = .{};
@@ -64,8 +70,7 @@ const Mesh = struct {
 
 const Camera = struct {
     const Self = @This();
-    pos: Vec3 = Vec3.new(0.0, 1.5, 4.0),
-    rotation: Quat = Quat.identity(),
+    transform: Transform = .{ .position = Vec3.new(0.0, 1.5, 4.0) },
     pitch: f32 = 0.0,
     yaw: f32 = 0.0,
     _mouse_start_pos: Vec2 = Vec2.zero(),
@@ -75,18 +80,19 @@ const Camera = struct {
         self.pitch = math.clamp(self.pitch + dy, -89.0, 89.0);
         const yaw_q = Quat.fromAxis(self.yaw, Vec3.up());
         const pitch_q = Quat.fromAxis(self.pitch, Vec3.right());
-        self.rotation = yaw_q.mul(pitch_q);
+        self.transform.rotation = yaw_q.mul(pitch_q);
     }
 
     fn update(self: *Self, t: f32) void {
-        const forward = self.rotation.rotateVec(Vec3.new(0, 0, -1));
-        const right = self.rotation.rotateVec(Vec3.new(1, 0, 0));
+        const forward = self.transform.rotation.rotateVec(Vec3.new(0, 0, -1));
+        const right = self.transform.rotation.rotateVec(Vec3.new(1, 0, 0));
         const speed: f32 = 10.0;
+        const pos = &self.transform.position;
 
-        if (state.input.key_down(.W)) self.pos = self.pos.add(forward.scale(speed * t));
-        if (state.input.key_down(.S)) self.pos = self.pos.sub(forward.scale(speed * t));
-        if (state.input.key_down(.D)) self.pos = self.pos.add(right.scale(speed * t));
-        if (state.input.key_down(.A)) self.pos = self.pos.sub(right.scale(speed * t));
+        if (state.input.key_down(.W)) pos.* = pos.add(forward.scale(speed * t));
+        if (state.input.key_down(.S)) pos.* = pos.sub(forward.scale(speed * t));
+        if (state.input.key_down(.D)) pos.* = pos.add(right.scale(speed * t));
+        if (state.input.key_down(.A)) pos.* = pos.sub(right.scale(speed * t));
 
         if (state.input.mouse_down(.RIGHT)) {
             self.rotate(
@@ -138,10 +144,10 @@ export fn init() void {
         &.{ -1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, -1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, -1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, -1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 1.0, 1.0, -1.0, 1.0, -1.0, 0.0, 0.0, 1.0, 1.0, -1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 0.5, 0.0, 1.0, 1.0, 1.0, -1.0, 1.0, 0.5, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.0, 1.0, 1.0, -1.0, 1.0, 1.0, 0.5, 0.0, 1.0, -1.0, -1.0, -1.0, 0.0, 0.5, 1.0, 1.0, -1.0, -1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, -1.0, -1.0, 0.0, 0.5, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 0.0, 0.5, 1.0, -1.0, 1.0, 1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.5, 1.0 },
         &.{ 0, 1, 2, 0, 2, 3, 6, 5, 4, 7, 6, 4, 8, 9, 10, 8, 10, 11, 14, 13, 12, 15, 14, 12, 16, 17, 18, 16, 18, 19, 22, 21, 20, 23, 22, 20 },
     ) catch return;
-    mesh_a.pos = Vec3.right();
+    mesh_a.transform.position = Vec3.right();
 
     var mesh_b = mesh_a.clone() catch return;
-    mesh_b.pos = Vec3.left();
+    mesh_b.transform.position = Vec3.left();
 
     mesh_a.upload();
     mesh_b.upload();
@@ -241,9 +247,9 @@ fn compute_vsparams(rx: f32, ry: f32, mesh: *const Mesh, camera: *const Camera) 
     const w = sapp.widthf();
     const h = sapp.heightf();
     const proj = za.perspective(60.0, w / h, 0.01, 100);
-    const view = camera.rotation.inv().toMat4()
-        .mul(Mat4.fromTranslate(camera.pos.negate()));
+    const view = camera.transform.rotation.inv().toMat4()
+        .mul(Mat4.fromTranslate(camera.transform.position.negate()));
     const view_proj = proj.mul(view);
-    const model = Mat4.fromTranslate(mesh.pos).mul(Mat4.fromEulerAngles(Vec3.new(rx, ry, 0)));
+    const model = Mat4.fromTranslate(mesh.transform.position).mul(Mat4.fromEulerAngles(Vec3.new(rx, ry, 0)));
     return .{ .mvp = view_proj.mul(model) };
 }
