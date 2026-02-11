@@ -2,8 +2,10 @@ const std = @import("std");
 const math = @import("std").math;
 
 const za = @import("zalgebra");
+const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
 const Mat4 = za.Mat4;
+const Quat = za.Quat;
 
 const sokol = @import("sokol");
 const sg = sokol.gfx;
@@ -14,6 +16,8 @@ const slog = sokol.log;
 const shader = @import("shader");
 
 var gpa: std.heap.DebugAllocator(.{}) = .init;
+
+const MOUSE_ROTATE_SPEED = 0.2;
 
 const Mesh = struct {
     const Self = @This();
@@ -58,11 +62,57 @@ const Mesh = struct {
     }
 };
 
+const Camera = struct {
+    const Self = @This();
+    pos: Vec3 = Vec3.new(0.0, 1.5, 4.0),
+    rotation: Quat = Quat.identity(),
+    pitch: f32 = 0.0,
+    yaw: f32 = 0.0,
+    _mouse_start_pos: Vec2 = Vec2.zero(),
+
+    fn rotate(self: *Self, dx: f32, dy: f32) void {
+        self.yaw += dx;
+        self.pitch = math.clamp(self.pitch + dy, -89.0, 89.0);
+        const yaw_q = Quat.fromAxis(self.yaw, Vec3.up());
+        const pitch_q = Quat.fromAxis(self.pitch, Vec3.right());
+        self.rotation = yaw_q.mul(pitch_q);
+    }
+
+    fn update(self: *Self, t: f32) void {
+        const forward = self.rotation.rotateVec(Vec3.new(0, 0, -1));
+        const right = self.rotation.rotateVec(Vec3.new(1, 0, 0));
+        const speed: f32 = 10.0;
+
+        if (state.input.key_down(.W)) self.pos = self.pos.add(forward.scale(speed * t));
+        if (state.input.key_down(.S)) self.pos = self.pos.sub(forward.scale(speed * t));
+        if (state.input.key_down(.D)) self.pos = self.pos.add(right.scale(speed * t));
+        if (state.input.key_down(.A)) self.pos = self.pos.sub(right.scale(speed * t));
+
+        if (state.input.mouse_down(.RIGHT)) {
+            self.rotate(
+                -state.input.mouse_delta.x() * MOUSE_ROTATE_SPEED,
+                -state.input.mouse_delta.y() * MOUSE_ROTATE_SPEED,
+            );
+        }
+
+        if (state.input.mouse_pressed(.RIGHT)) {
+            sapp.lockMouse(true);
+        } else if (state.input.mouse_released(.RIGHT)) {
+            sapp.lockMouse(false);
+        }
+    }
+};
+
+const input = @import("input.zig");
+const InputState = input.InputState;
+
 const State = struct {
     rx: f32 = 0.0,
     ry: f32 = 0.0,
     pip: sg.Pipeline = .{},
     meshes: std.ArrayList(Mesh) = .empty,
+    camera: Camera = .{},
+    input: InputState = .{},
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -120,9 +170,11 @@ export fn init() void {
 }
 
 export fn frame() void {
-    const t = sapp.frameDuration();
-    state.rx = state.rx + 50.0 * @as(f32, @floatCast(t));
-    state.ry = state.ry + 100.0 * @as(f32, @floatCast(t));
+    const t = @as(f32, @floatCast(sapp.frameDuration()));
+    // state.rx += 50.0 * @as(f32, @floatCast(t));
+    // state.ry += 100.0 * @as(f32, @floatCast(t));
+
+    state.camera.update(t);
 
     var pass = sg.Pass{ .swapchain = sglue.swapchain() };
 
@@ -135,7 +187,7 @@ export fn frame() void {
         var bind: sg.Bindings = .{};
         bind.vertex_buffers[0] = mesh.vbuf;
         bind.index_buffer = mesh.ibuf;
-        const vs_params = compute_vsparams(state.rx, state.ry, mesh);
+        const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
 
         sg.applyBindings(bind);
         sg.applyUniforms(shader.UB_vs_params, sg.asRange(&vs_params));
@@ -144,6 +196,23 @@ export fn frame() void {
 
     sg.endPass();
     sg.commit();
+
+    state.input.update();
+}
+
+export fn event_handler(maybe_event: [*c]const sapp.Event) void {
+    const event = maybe_event[0];
+    // const t = sapp.frameDuration();
+    switch (event.type) {
+        .KEY_DOWN => if (!event.key_repeat) state.input.setKey(event.key_code, .pressed),
+        .KEY_UP => state.input.setKey(event.key_code, .released),
+        .MOUSE_DOWN => state.input.setMouse(event.mouse_button, .pressed),
+        .MOUSE_UP => state.input.setMouse(event.mouse_button, .released),
+        .MOUSE_MOVE => {
+            state.input.mouse_delta = state.input.mouse_delta.add(Vec2.new(event.mouse_dx, event.mouse_dy));
+        },
+        else => {},
+    }
 }
 
 export fn cleanup() void {
@@ -159,20 +228,21 @@ pub fn main() void {
     sapp.run(.{
         .init_cb = init,
         .frame_cb = frame,
-        // .event_cb = input,
+        .event_cb = event_handler,
         .cleanup_cb = cleanup,
-        .width = 720,
-        .height = 480,
+        .width = 1920,
+        .height = 1080,
         .window_title = "voxel_zig",
         .logger = .{ .func = slog.func },
     });
 }
 
-fn compute_vsparams(rx: f32, ry: f32, mesh: *Mesh) shader.VsParams {
+fn compute_vsparams(rx: f32, ry: f32, mesh: *const Mesh, camera: *const Camera) shader.VsParams {
     const w = sapp.widthf();
     const h = sapp.heightf();
     const proj = za.perspective(60.0, w / h, 0.01, 100);
-    const view = za.lookAt(Vec3.new(0.0, 1.5, 4.0), Vec3.zero(), Vec3.up());
+    const view = camera.rotation.inv().toMat4()
+        .mul(Mat4.fromTranslate(camera.pos.negate()));
     const view_proj = proj.mul(view);
     const model = Mat4.fromTranslate(mesh.pos).mul(Mat4.fromEulerAngles(Vec3.new(rx, ry, 0)));
     return .{ .mvp = view_proj.mul(model) };
