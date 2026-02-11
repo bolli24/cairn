@@ -4,6 +4,7 @@ const math = @import("std").math;
 const za = @import("zalgebra");
 const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
+const Vec4 = za.Vec4;
 const Mat4 = za.Mat4;
 const Quat = za.Quat;
 
@@ -27,13 +28,13 @@ const Transform = struct {
 
 const Mesh = struct {
     const Self = @This();
-    vertices: std.ArrayList(f32) = .empty,
+    vertices: std.ArrayList(Vec3) = .empty,
     indices: std.ArrayList(u16) = .empty,
     vbuf: sg.Buffer = .{},
     ibuf: sg.Buffer = .{},
     transform: Transform = .{},
 
-    fn init(vertices: []const f32, indices: []const u16) !Self {
+    fn init(vertices: []const Vec3, indices: []const u16) !Self {
         var self: Self = .{};
 
         try self.vertices.appendSlice(gpa.allocator(), vertices);
@@ -51,7 +52,11 @@ const Mesh = struct {
         if (self.vbuf.id != 0) sg.destroyBuffer(self.vbuf);
         if (self.ibuf.id != 0) sg.destroyBuffer(self.ibuf);
 
-        self.vbuf = sg.makeBuffer(.{ .data = sg.asRange(self.vertices.items) });
+        self.vbuf = sg.makeBuffer(.{ .data = .{
+            .ptr = self.vertices.items.ptr,
+            .size = self.vertices.items.len * @sizeOf(Vec3),
+        } });
+
         self.ibuf = sg.makeBuffer(.{
             .usage = .{ .index_buffer = true },
             .data = sg.asRange(self.indices.items),
@@ -141,7 +146,32 @@ export fn init() void {
     });
 
     var mesh_a = Mesh.init(
-        &.{ -1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, -1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, -1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, -1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 1.0, 1.0, -1.0, 1.0, -1.0, 0.0, 0.0, 1.0, 1.0, -1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 0.5, 0.0, 1.0, 1.0, 1.0, -1.0, 1.0, 0.5, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.0, 1.0, 1.0, -1.0, 1.0, 1.0, 0.5, 0.0, 1.0, -1.0, -1.0, -1.0, 0.0, 0.5, 1.0, 1.0, -1.0, -1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, -1.0, -1.0, 0.0, 0.5, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 0.0, 0.5, 1.0, -1.0, 1.0, 1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.5, 1.0 },
+        &.{
+            Vec3.new(-1.0, -1.0, -1.0),
+            Vec3.new(1.0, -1.0, -1.0),
+            Vec3.new(1.0, 1.0, -1.0),
+            Vec3.new(-1.0, 1.0, -1.0),
+            Vec3.new(-1.0, -1.0, 1.0),
+            Vec3.new(1.0, -1.0, 1.0),
+            Vec3.new(1.0, 1.0, 1.0),
+            Vec3.new(-1.0, 1.0, 1.0),
+            Vec3.new(-1.0, -1.0, -1.0),
+            Vec3.new(-1.0, 1.0, -1.0),
+            Vec3.new(-1.0, 1.0, 1.0),
+            Vec3.new(-1.0, -1.0, 1.0),
+            Vec3.new(1.0, -1.0, -1.0),
+            Vec3.new(1.0, 1.0, -1.0),
+            Vec3.new(1.0, 1.0, 1.0),
+            Vec3.new(1.0, -1.0, 1.0),
+            Vec3.new(-1.0, -1.0, -1.0),
+            Vec3.new(-1.0, -1.0, 1.0),
+            Vec3.new(1.0, -1.0, 1.0),
+            Vec3.new(1.0, -1.0, -1.0),
+            Vec3.new(-1.0, 1.0, -1.0),
+            Vec3.new(-1.0, 1.0, 1.0),
+            Vec3.new(1.0, 1.0, 1.0),
+            Vec3.new(1.0, 1.0, -1.0),
+        },
         &.{ 0, 1, 2, 0, 2, 3, 6, 5, 4, 7, 6, 4, 8, 9, 10, 8, 10, 11, 14, 13, 12, 15, 14, 12, 16, 17, 18, 16, 18, 19, 22, 21, 20, 23, 22, 20 },
     ) catch return;
     mesh_a.transform.position = Vec3.right();
@@ -168,9 +198,9 @@ export fn init() void {
         .label = "cube-pipeline",
     };
 
-    pip_desc.layout.buffers[0].stride = 28;
+    pip_desc.layout.buffers[0].stride = @sizeOf(Vec3);
     pip_desc.layout.attrs[shader.ATTR_cube_position].format = .FLOAT3;
-    pip_desc.layout.attrs[shader.ATTR_cube_color0].format = .FLOAT4;
+    // pip_desc.layout.attrs[shader.ATTR_cube_color_].format = .FLOAT4;
 
     state.pip = sg.makePipeline(pip_desc);
 }
@@ -194,9 +224,11 @@ export fn frame() void {
         bind.vertex_buffers[0] = mesh.vbuf;
         bind.index_buffer = mesh.ibuf;
         const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
+        const fs_params = shader.FsParams{ .color = Vec4.new(0.5, 0.1, 1.0, 1.0) };
 
         sg.applyBindings(bind);
         sg.applyUniforms(shader.UB_vs_params, sg.asRange(&vs_params));
+        sg.applyUniforms(shader.UB_fs_params, sg.asRange(&fs_params));
         sg.draw(0, @intCast(mesh.indices.items.len), 1);
     }
 
