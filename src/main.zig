@@ -16,6 +16,8 @@ const saudio = sokol.audio;
 const slog = sokol.log;
 const shader = @import("shader");
 
+const obj = @import("obj.zig");
+
 var gpa: std.heap.DebugAllocator(.{}) = .init;
 
 const MOUSE_ROTATE_SPEED = 0.2;
@@ -26,36 +28,48 @@ const Transform = struct {
     scale: Vec3 = .one(),
 };
 
-const Mesh = struct {
+pub const Mesh = struct {
     const Self = @This();
     vertices: std.ArrayList(Vec3) = .empty,
+    normals: std.ArrayList(Vec3) = .empty,
     indices: std.ArrayList(u16) = .empty,
     vbuf: sg.Buffer = .{},
     ibuf: sg.Buffer = .{},
+    nbuf: sg.Buffer = .{},
     transform: Transform = .{},
+    allocator: std.mem.Allocator,
 
-    fn init(vertices: []const Vec3, indices: []const u16) !Self {
-        var self: Self = .{};
+    fn init(vertices: []const Vec3, indices: []const u16, allocator: std.mem.Allocator) !Self {
+        var self: Self = .{ .allocator = allocator };
 
-        try self.vertices.appendSlice(gpa.allocator(), vertices);
-        try self.indices.appendSlice(gpa.allocator(), indices);
+        try self.vertices.appendSlice(allocator, vertices);
+        try self.indices.appendSlice(allocator, indices);
 
         return self;
     }
 
-    fn deinit(self: *Self) void {
-        self.vertices.deinit(gpa.allocator());
-        self.indices.deinit(gpa.allocator());
+    pub fn deinit(self: *Self) void {
+        self.vertices.deinit(self.allocator);
+        self.normals.deinit(self.allocator);
+        self.indices.deinit(self.allocator);
     }
 
     fn upload(self: *Self) void {
         if (self.vbuf.id != 0) sg.destroyBuffer(self.vbuf);
+        if (self.nbuf.id != 0) sg.destroyBuffer(self.nbuf);
         if (self.ibuf.id != 0) sg.destroyBuffer(self.ibuf);
 
         self.vbuf = sg.makeBuffer(.{ .data = .{
             .ptr = self.vertices.items.ptr,
             .size = self.vertices.items.len * @sizeOf(Vec3),
         } });
+
+        if (self.normals.items.len > 0) {
+            self.nbuf = sg.makeBuffer(.{ .data = .{
+                .ptr = self.normals.items.ptr,
+                .size = self.normals.items.len * @sizeOf(Vec3),
+            } });
+        }
 
         self.ibuf = sg.makeBuffer(.{
             .usage = .{ .index_buffer = true },
@@ -65,8 +79,9 @@ const Mesh = struct {
 
     fn clone(self: *Self) !Self {
         const new_mesh = Self{
-            .vertices = try self.vertices.clone(gpa.allocator()),
-            .indices = try self.indices.clone(gpa.allocator()),
+            .vertices = try self.vertices.clone(self.allocator),
+            .normals = try self.normals.clone(self.allocator),
+            .indices = try self.indices.clone(self.allocator),
         };
 
         return new_mesh;
@@ -145,62 +160,29 @@ export fn init() void {
         .logger = .{ .func = slog.func },
     });
 
-    var mesh_a = Mesh.init(
-        &.{
-            Vec3.new(-1.0, -1.0, -1.0),
-            Vec3.new(1.0, -1.0, -1.0),
-            Vec3.new(1.0, 1.0, -1.0),
-            Vec3.new(-1.0, 1.0, -1.0),
-            Vec3.new(-1.0, -1.0, 1.0),
-            Vec3.new(1.0, -1.0, 1.0),
-            Vec3.new(1.0, 1.0, 1.0),
-            Vec3.new(-1.0, 1.0, 1.0),
-            Vec3.new(-1.0, -1.0, -1.0),
-            Vec3.new(-1.0, 1.0, -1.0),
-            Vec3.new(-1.0, 1.0, 1.0),
-            Vec3.new(-1.0, -1.0, 1.0),
-            Vec3.new(1.0, -1.0, -1.0),
-            Vec3.new(1.0, 1.0, -1.0),
-            Vec3.new(1.0, 1.0, 1.0),
-            Vec3.new(1.0, -1.0, 1.0),
-            Vec3.new(-1.0, -1.0, -1.0),
-            Vec3.new(-1.0, -1.0, 1.0),
-            Vec3.new(1.0, -1.0, 1.0),
-            Vec3.new(1.0, -1.0, -1.0),
-            Vec3.new(-1.0, 1.0, -1.0),
-            Vec3.new(-1.0, 1.0, 1.0),
-            Vec3.new(1.0, 1.0, 1.0),
-            Vec3.new(1.0, 1.0, -1.0),
-        },
-        &.{ 0, 1, 2, 0, 2, 3, 6, 5, 4, 7, 6, 4, 8, 9, 10, 8, 10, 11, 14, 13, 12, 15, 14, 12, 16, 17, 18, 16, 18, 19, 22, 21, 20, 23, 22, 20 },
-    ) catch return;
-    mesh_a.transform.position = Vec3.right();
+    var suzanne = obj.load_mesh_from_obj(gpa.allocator(), "res/suzanne.obj") catch return;
+    suzanne.upload();
+    state.add_mesh(suzanne) catch return;
 
-    var mesh_b = mesh_a.clone() catch return;
-    mesh_b.transform.position = Vec3.left();
-
-    mesh_a.upload();
-    mesh_b.upload();
-
-    state.add_mesh(mesh_a) catch return;
-    state.add_mesh(mesh_b) catch return;
-
-    const shd = sg.makeShader(shader.cubeShaderDesc(sg.queryBackend()));
+    const shd = sg.makeShader(shader.basicShaderDesc(sg.queryBackend()));
 
     var pip_desc = sg.PipelineDesc{
         .shader = shd,
         .index_type = .UINT16,
         .cull_mode = .BACK,
+        .face_winding = .CCW,
         .depth = .{
             .write_enabled = true,
             .compare = .LESS_EQUAL,
         },
-        .label = "cube-pipeline",
+        .label = "basic-pipeline",
     };
 
     pip_desc.layout.buffers[0].stride = @sizeOf(Vec3);
-    pip_desc.layout.attrs[shader.ATTR_cube_position].format = .FLOAT3;
-    // pip_desc.layout.attrs[shader.ATTR_cube_color_].format = .FLOAT4;
+    pip_desc.layout.buffers[1].stride = @sizeOf(Vec3);
+    pip_desc.layout.attrs[shader.ATTR_basic_position].format = .FLOAT3;
+    pip_desc.layout.attrs[shader.ATTR_basic_aNormal].format = .FLOAT3;
+    pip_desc.layout.attrs[shader.ATTR_basic_aNormal].buffer_index = 1;
 
     state.pip = sg.makePipeline(pip_desc);
 }
@@ -222,9 +204,15 @@ export fn frame() void {
     for (state.meshes.items) |*mesh| {
         var bind: sg.Bindings = .{};
         bind.vertex_buffers[0] = mesh.vbuf;
+        bind.vertex_buffers[1] = mesh.nbuf;
         bind.index_buffer = mesh.ibuf;
         const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
-        const fs_params = shader.FsParams{ .color = Vec4.new(0.5, 0.1, 1.0, 1.0) };
+        const fs_params = shader.FsParams{
+            .base_color = .{ 0.5, 0.1, 1.0 },
+            .ambient = .{ 0.2, 0.2, 0.2 },
+            .light_color = .{ 0.1, 0.5, 0.1 },
+            .light_pos = .{ 4.0, 4.0, 4.0 },
+        };
 
         sg.applyBindings(bind);
         sg.applyUniforms(shader.UB_vs_params, sg.asRange(&vs_params));
@@ -275,13 +263,22 @@ pub fn main() void {
     });
 }
 
+test {
+    _ = @import("obj.zig");
+}
+
 fn compute_vsparams(rx: f32, ry: f32, mesh: *const Mesh, camera: *const Camera) shader.VsParams {
     const w = sapp.widthf();
     const h = sapp.heightf();
     const proj = za.perspective(60.0, w / h, 0.01, 100);
     const view = camera.transform.rotation.inv().toMat4()
         .mul(Mat4.fromTranslate(camera.transform.position.negate()));
-    const view_proj = proj.mul(view);
     const model = Mat4.fromTranslate(mesh.transform.position).mul(Mat4.fromEulerAngles(Vec3.new(rx, ry, 0)));
-    return .{ .mvp = view_proj.mul(model) };
+
+    return .{
+        .model = model,
+        .view = view,
+        .proj = proj,
+        .normal_mat = model.inv().transpose(),
+    };
 }

@@ -109,7 +109,14 @@ pub fn build(b: *std.Build) !void {
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
     // by passing `--prefix` or `-p`.
-    b.installArtifact(exe);
+    b.getInstallStep().dependOn(&b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = .prefix },
+    }).step);
+    b.installDirectory(.{
+        .source_dir = b.path("res"),
+        .install_dir = .prefix,
+        .install_subdir = "res",
+    });
 
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
@@ -125,6 +132,7 @@ pub fn build(b: *std.Build) !void {
     // how this Run step will be executed. In our case we want to run it when
     // the user runs `zig build run`, so we create a dependency link.
     const run_cmd = b.addRunArtifact(exe);
+    run_cmd.setCwd(b.path("zig-out"));
     run_step.dependOn(&run_cmd.step);
 
     // By making the run step depend on the default step, it will be run from the
