@@ -40,6 +40,10 @@
             .url = "git+https://github.com/kooparse/zalgebra.git#fe19b7816f03d86d56d4fa62f943664edf5d367f",
             .hash = "zalgebra-0.0.0-aaiVSrp2AQBLjd3lvhR0ILaVDHeqOpwNFCp0ZJHj0xhk",
         },
+        .fastnoiselite = .{
+            .url = "git+https://github.com/akunaakwei/zig-fastnoiselite.git#ace98ed6907a44912450973c7aa7b46ae53ee2d2",
+            .hash = "fastnoiselite-1.1.1-u5uILR4HAABIoeBg77lepPYKLC-UVCAFPjsAVPvcR5Ql",
+        },
     },
     .paths = .{
         "build.zig",

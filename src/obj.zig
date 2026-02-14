@@ -40,7 +40,7 @@ pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !
         writer.end = 0;
     }
 
-    std.debug.print("Loaded {} vertices, {} normals, {} indices\n", .{ mesh.vertices.items.len, mesh.normals.items.len, mesh.indices.items.len });
+    std.debug.print("Loaded {} vertices, {} indices\n", .{ mesh.vertices.items.len, mesh.indices.items.len });
     return mesh;
 }
 
@@ -119,12 +119,11 @@ fn parseFace(
         if (fv.pos_idx >= raw_positions.len) return;
 
         const idx: u16 = @intCast(mesh.vertices.items.len);
-        try mesh.vertices.append(allocator, raw_positions[fv.pos_idx]);
-        if (fv.norm_idx) |ni| {
-            if (ni < raw_normals.len) {
-                try mesh.normals.append(allocator, raw_normals[ni]);
-            }
-        }
+        const normal = if (fv.norm_idx) |ni| (if (ni < raw_normals.len) raw_normals[ni] else Vec3.zero()) else Vec3.zero();
+        try mesh.vertices.append(allocator, .{
+            .pos = raw_positions[fv.pos_idx],
+            .normal = normal,
+        });
 
         face[count] = idx;
         count += 1;
@@ -142,11 +141,9 @@ test "load_mesh_from_obj parses vertices, normals and indices" {
     var data = try load_mesh_from_obj(std.testing.allocator, "res/suzanne.obj");
     defer data.deinit(std.testing.allocator);
     try std.testing.expect(data.vertices.items.len > 0);
-    try std.testing.expect(data.normals.items.len > 0);
     try std.testing.expect(data.indices.items.len > 0);
     try std.testing.expect(data.indices.items.len % 3 == 0);
-    try std.testing.expectEqual(data.vertices.items.len, data.normals.items.len);
-    std.debug.print("First vertex: ({d}, {d}, {d})\n", .{ data.vertices.items[0].x(), data.vertices.items[0].y(), data.vertices.items[0].z() });
-    std.debug.print("First normal: ({d}, {d}, {d})\n", .{ data.normals.items[0].x(), data.normals.items[0].y(), data.normals.items[0].z() });
+    std.debug.print("First vertex: ({d}, {d}, {d})\n", .{ data.vertices.items[0].pos.x(), data.vertices.items[0].pos.y(), data.vertices.items[0].pos.z() });
+    std.debug.print("First normal: ({d}, {d}, {d})\n", .{ data.vertices.items[0].normal.x(), data.vertices.items[0].normal.y(), data.vertices.items[0].normal.z() });
     std.debug.print("Triangles: {}\n", .{data.indices.items.len / 3});
 }

@@ -21,15 +21,18 @@ const obj = @import("obj.zig");
 const terrain_mod = @import("terrain.zig");
 const mesh_mod = @import("mesh.zig");
 pub const Mesh = mesh_mod.Mesh;
+const Vertex = mesh_mod.Vertex;
 const Transform = mesh_mod.Transform;
 const Camera = @import("camera.zig").Camera;
 const Chunk = terrain_mod.Chunk;
 const Terrain = terrain_mod.Terrain;
 
-var gpa: std.heap.DebugAllocator(.{}) = .init;
-
 const input = @import("input.zig");
 const InputState = input.InputState;
+
+const fastnoise = @import("fastnoise");
+
+var gpa: std.heap.DebugAllocator(.{}) = .init;
 
 const State = struct {
     rx: f32 = 0.0,
@@ -64,20 +67,22 @@ export fn init() void {
     sg.setup(.{
         .environment = sglue.environment(),
         .logger = .{ .func = slog.func },
+        .buffer_pool_size = 1024,
     });
 
-    state.terrain = terrain_mod.Terrain.init(gpa.allocator());
-
-    const chunk_positions = [_]Vec3_i32{
-        Vec3_i32.new(0, 0, 0),
-        Vec3_i32.new(1, 0, 0),
-        Vec3_i32.new(0, 0, 1),
-        Vec3_i32.new(1, 0, 1),
+    const noise = fastnoise.Noise(f32){
+        .seed = 1337,
+        .noise_type = .simplex_smooth,
+        .frequency = 0.025,
+        .gain = 0.40,
+        // .fractal_type = .fbm,
+        // .lacunarity = 0.40,
+        // .cellular_distance = .euclidean,
+        // .cellular_return = .distance2,
+        // .cellular_jitter_mod = 0.88,
     };
-    for (chunk_positions) |pos| {
-        const chunk = state.terrain.add_chunk(pos) catch return;
-        chunk.set_blocks(gpa.allocator(), .{ .min = .zero(), .max = Vec3_i32.new(16, 3, 16) }, .ground);
-    }
+
+    state.terrain = terrain_mod.Terrain.generate_with_noise(gpa.allocator(), noise, .new(6, 2, 6));
 
     var suzanne = obj.load_mesh_from_obj(gpa.allocator(), "res/suzanne.obj") catch return;
     suzanne.transform.position = Vec3.new(0, 10, 0);
@@ -100,11 +105,10 @@ export fn init() void {
         .label = "basic-pipeline",
     };
 
-    pip_desc.layout.buffers[0].stride = @sizeOf(Vec3);
-    pip_desc.layout.buffers[1].stride = @sizeOf(Vec3);
+    pip_desc.layout.buffers[0].stride = @sizeOf(Vertex);
     pip_desc.layout.attrs[shader.ATTR_basic_position].format = .FLOAT3;
     pip_desc.layout.attrs[shader.ATTR_basic_aNormal].format = .FLOAT3;
-    pip_desc.layout.attrs[shader.ATTR_basic_aNormal].buffer_index = 1;
+    pip_desc.layout.attrs[shader.ATTR_basic_aNormal].offset = @offsetOf(Vertex, "normal");
 
     state.pip = sg.makePipeline(pip_desc);
 
@@ -115,8 +119,6 @@ export fn init() void {
 
 export fn frame() void {
     const t = @as(f32, @floatCast(sapp.frameDuration()));
-    // state.rx += 50.0 * @as(f32, @floatCast(t));
-    // state.ry += 100.0 * @as(f32, @floatCast(t));
 
     state.camera.update(t, &state.input);
 
@@ -126,8 +128,8 @@ export fn frame() void {
 
     if (state.input.mouse_pressed(.LEFT)) {
         const forward = state.camera.transform.rotation.rotateVec(Vec3.new(0, 0, -1));
-        if (state.terrain.raycast(state.camera.transform.position, forward, 50.0)) |hit| {
-            state.terrain.set_block(hit.previous, .ground);
+        if (state.terrain.raycast(state.camera.transform.position, forward, 500.0)) |hit| {
+            state.terrain.set_block(hit.previous, .ground, true);
         }
     }
 
@@ -140,6 +142,7 @@ export fn frame() void {
 
     var chunk_it = state.terrain.chunks.valueIterator();
     while (chunk_it.next()) |chunk_ptr| {
+        if (chunk_ptr.mesh.vertices.items.len == 0) continue;
         submit_mesh(&chunk_ptr.*.mesh);
     }
 
@@ -158,7 +161,6 @@ fn submit_mesh(mesh: *const Mesh) void {
 
     var bind: sg.Bindings = .{};
     bind.vertex_buffers[0] = mesh.vbuf;
-    bind.vertex_buffers[1] = mesh.nbuf;
     bind.index_buffer = if (use_wireframe) mesh.wireframe_ibuf else mesh.ibuf;
     const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
     const fs_params = shader.FsParams{

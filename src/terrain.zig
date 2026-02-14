@@ -5,6 +5,8 @@ const za = @import("zalgebra");
 const Vec3_i32 = za.Vec3_i32;
 const Vec3 = za.Vec3;
 
+const fastnoise = @import("fastnoise");
+
 const lib = @import("mesh.zig");
 
 pub const CHUNK_SIZE = 16;
@@ -21,32 +23,83 @@ pub const RaycastHit = struct {
 
 pub const Terrain = struct {
     const Self = @This();
-    chunks: std.AutoHashMap(Vec3_i32, *Chunk),
+    chunks: std.AutoHashMap(Vec3_i32, Chunk),
     allocator: std.mem.Allocator,
 
+    pub fn generate_with_noise(allocator: std.mem.Allocator, noise: fastnoise.Noise(f32), size: za.Vec3_usize) Self {
+        var self = Self.init(allocator);
+
+        for (0..size.x()) |x| {
+            for (0..size.y()) |y| {
+                for (0..size.z()) |z| {
+                    const chunk_pos = Vec3_i32.new(@intCast(x), @intCast(y), @intCast(z));
+                    const world_pos = Vec3.new(@floatFromInt(x * CHUNK_SIZE), @floatFromInt(y * CHUNK_SIZE), @floatFromInt(z * CHUNK_SIZE));
+                    const chunk = Chunk{ .pos = chunk_pos, .mesh = .{ .transform = .{
+                        .position = world_pos,
+                    } } };
+
+                    self.chunks.put(chunk_pos, chunk) catch continue;
+                }
+            }
+        }
+
+        const total_height: f32 = @floatFromInt(size.y() * CHUNK_SIZE);
+
+        for (0..size.x()) |cx| {
+            for (0..size.z()) |cz| {
+                for (0..CHUNK_SIZE) |lx| {
+                    for (0..CHUNK_SIZE) |lz| {
+                        const wx: f32 = @floatFromInt(cx * CHUNK_SIZE + lx);
+                        const wz: f32 = @floatFromInt(cz * CHUNK_SIZE + lz);
+                        const n = noise.genNoise2D(wx, wz);
+                        // Map noise from [-1, 1] to [0, 1], then scale to total height
+                        const height: usize = @intFromFloat((n + 1.0) * 0.5 * total_height);
+
+                        for (0..height) |wy| {
+                            const cy = wy / CHUNK_SIZE;
+                            const ly = wy % CHUNK_SIZE;
+                            const chunk_pos = Vec3_i32.new(@intCast(cx), @intCast(cy), @intCast(cz));
+                            const chunk = self.chunks.getPtr(chunk_pos) orelse continue;
+                            chunk._blocks[lx][ly][lz] = .ground;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remesh all chunks after setting blocks
+        var it = self.chunks.valueIterator();
+        while (it.next()) |chunk_ptr| {
+            chunk_ptr.update_mesh(allocator);
+        }
+
+        return self;
+    }
+
     pub fn init(allocator: std.mem.Allocator) Self {
-        return .{ .chunks = std.AutoHashMap(Vec3_i32, *Chunk).init(allocator), .allocator = allocator };
+        return .{
+            .chunks = std.AutoHashMap(Vec3_i32, Chunk).init(allocator),
+            .allocator = allocator,
+        };
     }
 
     pub fn deinit(self: *Self) void {
         var it = self.chunks.valueIterator();
         while (it.next()) |chunk_ptr| {
-            chunk_ptr.*.deinit(self.allocator);
-            self.allocator.destroy(chunk_ptr.*);
+            chunk_ptr.deinit(self.allocator);
         }
         self.chunks.deinit();
     }
 
     pub fn add_chunk(self: *Self, pos: Vec3_i32) !*Chunk {
-        const chunk = try self.allocator.create(Chunk);
-        chunk.* = .{ .pos = pos };
+        var chunk = Chunk{ .pos = pos };
         chunk.mesh.transform.position = Vec3.new(
             @as(f32, @floatFromInt(pos.x())) * CHUNK_SIZE,
             @as(f32, @floatFromInt(pos.y())) * CHUNK_SIZE,
             @as(f32, @floatFromInt(pos.z())) * CHUNK_SIZE,
         );
         try self.chunks.put(pos, chunk);
-        return chunk;
+        return self.chunks.getPtr(pos).?;
     }
 
     fn world_to_chunk_pos(world_pos: Vec3_i32) Vec3_i32 {
@@ -70,11 +123,54 @@ pub const Terrain = struct {
         return chunk.get_block(world_to_local_pos(world_pos));
     }
 
-    pub fn set_block(self: *Self, world_pos: Vec3_i32, block: Block) void {
-        const chunk = self.chunks.get(world_to_chunk_pos(world_pos)) orelse return;
+    pub fn set_block(self: *Self, world_pos: Vec3_i32, block: Block, remesh: bool) void {
+        const chunk = self.chunks.getPtr(world_to_chunk_pos(world_pos)) orelse return;
         const local = world_to_local_pos(world_pos);
         chunk._blocks[@intCast(local.x())][@intCast(local.y())][@intCast(local.z())] = block;
-        chunk.update_mesh(self.allocator);
+
+        if (remesh) {
+            chunk.update_mesh(self.allocator);
+        }
+    }
+
+    pub fn set_blocks(self: *Self, allocator: std.mem.Allocator, box: BoxI, block: Block, remesh: bool) void {
+        const min_chunk = world_to_chunk_pos(box.min);
+        const max_chunk = world_to_chunk_pos(Vec3_i32.new(box.max.x() - 1, box.max.y() - 1, box.max.z() - 1));
+
+        var cx = min_chunk.x();
+        while (cx <= max_chunk.x()) : (cx += 1) {
+            var cy = min_chunk.y();
+            while (cy <= max_chunk.y()) : (cy += 1) {
+                var cz = min_chunk.z();
+                while (cz <= max_chunk.z()) : (cz += 1) {
+                    const chunk = self.chunks.getPtr(Vec3_i32.new(cx, cy, cz)) orelse continue;
+
+                    // Clamp box to this chunk's local bounds
+                    const chunk_world_x = cx * CHUNK_SIZE;
+                    const chunk_world_y = cy * CHUNK_SIZE;
+                    const chunk_world_z = cz * CHUNK_SIZE;
+
+                    const lx_min: usize = @intCast(@max(box.min.x() - chunk_world_x, 0));
+                    const ly_min: usize = @intCast(@max(box.min.y() - chunk_world_y, 0));
+                    const lz_min: usize = @intCast(@max(box.min.z() - chunk_world_z, 0));
+                    const lx_max: usize = @intCast(@min(box.max.x() - chunk_world_x, CHUNK_SIZE));
+                    const ly_max: usize = @intCast(@min(box.max.y() - chunk_world_y, CHUNK_SIZE));
+                    const lz_max: usize = @intCast(@min(box.max.z() - chunk_world_z, CHUNK_SIZE));
+
+                    for (lx_min..lx_max) |lx| {
+                        for (ly_min..ly_max) |ly| {
+                            for (lz_min..lz_max) |lz| {
+                                chunk._blocks[lx][ly][lz] = block;
+                            }
+                        }
+                    }
+
+                    if (remesh) {
+                        chunk.update_mesh(allocator);
+                    }
+                }
+            }
+        }
     }
 
     pub fn raycast(self: *const Self, origin: Vec3, direction: Vec3, range: f32) ?RaycastHit {
@@ -227,7 +323,6 @@ pub const Chunk = struct {
     pub fn update_mesh(self: *Self, allocator: std.mem.Allocator) void {
         self.mesh.vertices.clearRetainingCapacity();
         self.mesh.indices.clearRetainingCapacity();
-        self.mesh.normals.clearRetainingCapacity();
         self.mesh.wireframe_indices.clearRetainingCapacity();
 
         for (0..CHUNK_SIZE) |x| {
@@ -254,9 +349,12 @@ pub const Chunk = struct {
                         }
 
                         const base: u16 = @intCast(self.mesh.vertices.items.len);
+                        const normal = za.Vec3.new(face.normal[0], face.normal[1], face.normal[2]);
                         for (face.verts) |v| {
-                            self.mesh.vertices.append(allocator, za.Vec3.new(v[0] + fx, v[1] + fy, v[2] + fz)) catch return;
-                            self.mesh.normals.append(allocator, za.Vec3.new(face.normal[0], face.normal[1], face.normal[2])) catch return;
+                            self.mesh.vertices.append(allocator, .{
+                                .pos = za.Vec3.new(v[0] + fx, v[1] + fy, v[2] + fz),
+                                .normal = normal,
+                            }) catch return;
                         }
                         // Two triangles: 0-1-2, 0-2-3
                         self.mesh.indices.appendSlice(allocator, &.{ base, base + 1, base + 2, base, base + 2, base + 3 }) catch return;
@@ -270,7 +368,9 @@ pub const Chunk = struct {
             }
         }
 
-        self.mesh.upload();
+        if (self.mesh.vertices.items.len > 0) {
+            self.mesh.upload();
+        }
     }
 
     pub fn set_block(self: *Self, allocator: std.mem.Allocator, pos: za.Vec3_usize, block: Block) void {
@@ -302,3 +402,99 @@ pub const Chunk = struct {
         self.update_mesh(allocator);
     }
 };
+
+test "set_blocks within single chunk" {
+    const allocator = std.testing.allocator;
+    var terrain = Terrain.init(allocator);
+    defer terrain.deinit();
+
+    // Add a single chunk at origin
+    terrain.chunks.put(Vec3_i32.new(0, 0, 0), Chunk{ .pos = Vec3_i32.new(0, 0, 0) }) catch unreachable;
+
+    // Fill a 3x4x5 box
+    terrain.set_blocks(allocator, .{
+        .min = Vec3_i32.new(2, 3, 4),
+        .max = Vec3_i32.new(5, 7, 9),
+    }, .ground, false);
+
+    // Blocks inside the box should be ground
+    for (2..5) |x| {
+        for (3..7) |y| {
+            for (4..9) |z| {
+                try std.testing.expectEqual(Block.ground, terrain.get_block(Vec3_i32.new(@intCast(x), @intCast(y), @intCast(z))));
+            }
+        }
+    }
+
+    // Blocks outside the box should still be air
+    try std.testing.expectEqual(Block.air, terrain.get_block(Vec3_i32.new(1, 3, 4)));
+    try std.testing.expectEqual(Block.air, terrain.get_block(Vec3_i32.new(5, 7, 9)));
+    try std.testing.expectEqual(Block.air, terrain.get_block(Vec3_i32.new(0, 0, 0)));
+}
+
+test "set_blocks spanning multiple chunks" {
+    const allocator = std.testing.allocator;
+    var terrain = Terrain.init(allocator);
+    defer terrain.deinit();
+
+    // Add a 2x2x2 grid of chunks
+    for (0..2) |cx| {
+        for (0..2) |cy| {
+            for (0..2) |cz| {
+                const pos = Vec3_i32.new(@intCast(cx), @intCast(cy), @intCast(cz));
+                terrain.chunks.put(pos, Chunk{ .pos = pos }) catch unreachable;
+            }
+        }
+    }
+
+    // Fill a box that spans from chunk (0,0,0) into chunk (1,1,1)
+    terrain.set_blocks(allocator, .{
+        .min = Vec3_i32.new(14, 14, 14),
+        .max = Vec3_i32.new(18, 18, 18),
+    }, .ground, false);
+
+    // Verify blocks in chunk (0,0,0) — local (14,14,14) to (15,15,15)
+    for (14..16) |x| {
+        for (14..16) |y| {
+            for (14..16) |z| {
+                try std.testing.expectEqual(Block.ground, terrain.get_block(Vec3_i32.new(@intCast(x), @intCast(y), @intCast(z))));
+            }
+        }
+    }
+
+    // Verify blocks in chunk (1,1,1) — world (16,16,16) to (17,17,17)
+    for (16..18) |x| {
+        for (16..18) |y| {
+            for (16..18) |z| {
+                try std.testing.expectEqual(Block.ground, terrain.get_block(Vec3_i32.new(@intCast(x), @intCast(y), @intCast(z))));
+            }
+        }
+    }
+
+    // Verify a block just outside the box is air
+    try std.testing.expectEqual(Block.air, terrain.get_block(Vec3_i32.new(13, 14, 14)));
+    try std.testing.expectEqual(Block.air, terrain.get_block(Vec3_i32.new(18, 18, 18)));
+}
+
+test "set_blocks skips missing chunks" {
+    const allocator = std.testing.allocator;
+    var terrain = Terrain.init(allocator);
+    defer terrain.deinit();
+
+    // Only add chunk (0,0,0), not chunk (1,0,0)
+    terrain.chunks.put(Vec3_i32.new(0, 0, 0), Chunk{ .pos = Vec3_i32.new(0, 0, 0) }) catch unreachable;
+
+    // Box spans into chunk (1,0,0) which doesn't exist
+    terrain.set_blocks(allocator, .{
+        .min = Vec3_i32.new(14, 0, 0),
+        .max = Vec3_i32.new(18, 2, 2),
+    }, .ground, false);
+
+    // Blocks in existing chunk should be set
+    try std.testing.expectEqual(Block.ground, terrain.get_block(Vec3_i32.new(14, 0, 0)));
+    try std.testing.expectEqual(Block.ground, terrain.get_block(Vec3_i32.new(15, 1, 1)));
+
+    // Blocks in missing chunk should return air (default for missing chunk)
+    try std.testing.expectEqual(Block.air, terrain.get_block(Vec3_i32.new(16, 0, 0)));
+    try std.testing.expectEqual(Block.air, terrain.get_block(Vec3_i32.new(17, 1, 1)));
+}
