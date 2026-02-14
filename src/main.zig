@@ -4,6 +4,7 @@ const math = @import("std").math;
 const za = @import("zalgebra");
 const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
+const Vec3_i32 = za.Vec3_i32;
 const Vec4 = za.Vec4;
 const Mat4 = za.Mat4;
 const Quat = za.Quat;
@@ -17,117 +18,15 @@ const slog = sokol.log;
 const shader = @import("shader");
 
 const obj = @import("obj.zig");
+const terrain_mod = @import("terrain.zig");
+const mesh_mod = @import("mesh.zig");
+pub const Mesh = mesh_mod.Mesh;
+const Transform = mesh_mod.Transform;
+const Camera = @import("camera.zig").Camera;
+const Chunk = terrain_mod.Chunk;
+const Terrain = terrain_mod.Terrain;
 
 var gpa: std.heap.DebugAllocator(.{}) = .init;
-
-const MOUSE_ROTATE_SPEED = 0.2;
-
-const Transform = struct {
-    position: Vec3 = .zero(),
-    rotation: Quat = .identity(),
-    scale: Vec3 = .one(),
-};
-
-pub const Mesh = struct {
-    const Self = @This();
-    vertices: std.ArrayList(Vec3) = .empty,
-    normals: std.ArrayList(Vec3) = .empty,
-    indices: std.ArrayList(u16) = .empty,
-    vbuf: sg.Buffer = .{},
-    ibuf: sg.Buffer = .{},
-    nbuf: sg.Buffer = .{},
-    transform: Transform = .{},
-    color: Vec3 = Vec3.one().scale(0.5),
-
-    fn init(vertices: []const Vec3, indices: []const u16, allocator: std.mem.Allocator) !Self {
-        var self: Self = .{ .allocator = allocator };
-
-        try self.vertices.appendSlice(allocator, vertices);
-        try self.indices.appendSlice(allocator, indices);
-
-        return self;
-    }
-
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        self.vertices.deinit(allocator);
-        self.normals.deinit(allocator);
-        self.indices.deinit(allocator);
-    }
-
-    fn upload(self: *Self) void {
-        if (self.vbuf.id != 0) sg.destroyBuffer(self.vbuf);
-        if (self.nbuf.id != 0) sg.destroyBuffer(self.nbuf);
-        if (self.ibuf.id != 0) sg.destroyBuffer(self.ibuf);
-
-        self.vbuf = sg.makeBuffer(.{ .data = .{
-            .ptr = self.vertices.items.ptr,
-            .size = self.vertices.items.len * @sizeOf(Vec3),
-        } });
-
-        if (self.normals.items.len > 0) {
-            self.nbuf = sg.makeBuffer(.{ .data = .{
-                .ptr = self.normals.items.ptr,
-                .size = self.normals.items.len * @sizeOf(Vec3),
-            } });
-        }
-
-        self.ibuf = sg.makeBuffer(.{
-            .usage = .{ .index_buffer = true },
-            .data = sg.asRange(self.indices.items),
-        });
-    }
-
-    fn clone(self: *Self, allocator: std.mem.Allocator) !Self {
-        const new_mesh = Self{
-            .vertices = try self.vertices.clone(allocator),
-            .normals = try self.normals.clone(allocator),
-            .indices = try self.indices.clone(allocator),
-        };
-
-        return new_mesh;
-    }
-};
-
-const Camera = struct {
-    const Self = @This();
-    transform: Transform = .{ .position = Vec3.new(0, 0, 4.0) },
-    pitch: f32 = 0.0,
-    yaw: f32 = 0.0,
-    _mouse_start_pos: Vec2 = Vec2.zero(),
-
-    fn rotate(self: *Self, dx: f32, dy: f32) void {
-        self.yaw += dx;
-        self.pitch = math.clamp(self.pitch + dy, -89.0, 89.0);
-        const yaw_q = Quat.fromAxis(self.yaw, Vec3.up());
-        const pitch_q = Quat.fromAxis(self.pitch, Vec3.right());
-        self.transform.rotation = yaw_q.mul(pitch_q);
-    }
-
-    fn update(self: *Self, t: f32) void {
-        const forward = self.transform.rotation.rotateVec(Vec3.new(0, 0, -1));
-        const right = self.transform.rotation.rotateVec(Vec3.new(1, 0, 0));
-        const speed: f32 = 10.0;
-        const pos = &self.transform.position;
-
-        if (state.input.key_down(.W)) pos.* = pos.add(forward.scale(speed * t));
-        if (state.input.key_down(.S)) pos.* = pos.sub(forward.scale(speed * t));
-        if (state.input.key_down(.D)) pos.* = pos.add(right.scale(speed * t));
-        if (state.input.key_down(.A)) pos.* = pos.sub(right.scale(speed * t));
-
-        if (state.input.mouse_down(.RIGHT)) {
-            self.rotate(
-                -state.input.mouse_delta.x() * MOUSE_ROTATE_SPEED,
-                -state.input.mouse_delta.y() * MOUSE_ROTATE_SPEED,
-            );
-        }
-
-        if (state.input.mouse_pressed(.RIGHT)) {
-            sapp.lockMouse(true);
-        } else if (state.input.mouse_released(.RIGHT)) {
-            sapp.lockMouse(false);
-        }
-    }
-};
 
 const input = @import("input.zig");
 const InputState = input.InputState;
@@ -136,7 +35,10 @@ const State = struct {
     rx: f32 = 0.0,
     ry: f32 = 0.0,
     pip: sg.Pipeline = .{},
+    pip_wireframe: sg.Pipeline = .{},
+    wireframe: bool = false,
     meshes: std.ArrayList(Mesh) = .empty,
+    terrain: Terrain = undefined,
     camera: Camera = .{},
     input: InputState = .{},
     light_color: Vec3 = .new(1, 1, 1),
@@ -148,6 +50,7 @@ const State = struct {
             mesh.deinit(gpa.allocator());
         }
         self.meshes.deinit(gpa.allocator());
+        self.terrain.deinit();
     }
 
     fn add_mesh(self: *@This(), mesh: Mesh) !void {
@@ -163,7 +66,21 @@ export fn init() void {
         .logger = .{ .func = slog.func },
     });
 
+    state.terrain = terrain_mod.Terrain.init(gpa.allocator());
+
+    const chunk_positions = [_]Vec3_i32{
+        Vec3_i32.new(0, 0, 0),
+        Vec3_i32.new(1, 0, 0),
+        Vec3_i32.new(0, 0, 1),
+        Vec3_i32.new(1, 0, 1),
+    };
+    for (chunk_positions) |pos| {
+        const chunk = state.terrain.add_chunk(pos) catch return;
+        chunk.set_blocks(gpa.allocator(), .{ .min = .zero(), .max = Vec3_i32.new(16, 3, 16) }, .ground);
+    }
+
     var suzanne = obj.load_mesh_from_obj(gpa.allocator(), "res/suzanne.obj") catch return;
+    suzanne.transform.position = Vec3.new(0, 10, 0);
     suzanne.upload();
     state.add_mesh(suzanne) catch return;
 
@@ -190,6 +107,10 @@ export fn init() void {
     pip_desc.layout.attrs[shader.ATTR_basic_aNormal].buffer_index = 1;
 
     state.pip = sg.makePipeline(pip_desc);
+
+    pip_desc.primitive_type = .LINES;
+    pip_desc.label = "wireframe-pipeline";
+    state.pip_wireframe = sg.makePipeline(pip_desc);
 }
 
 export fn frame() void {
@@ -197,38 +118,61 @@ export fn frame() void {
     // state.rx += 50.0 * @as(f32, @floatCast(t));
     // state.ry += 100.0 * @as(f32, @floatCast(t));
 
-    state.camera.update(t);
+    state.camera.update(t, &state.input);
+
+    if (state.input.key_pressed(.F1)) {
+        state.wireframe = !state.wireframe;
+    }
+
+    if (state.input.mouse_pressed(.LEFT)) {
+        const forward = state.camera.transform.rotation.rotateVec(Vec3.new(0, 0, -1));
+        if (state.terrain.raycast(state.camera.transform.position, forward, 50.0)) |hit| {
+            state.terrain.set_block(hit.previous, .ground);
+        }
+    }
 
     var pass = sg.Pass{ .swapchain = sglue.swapchain() };
 
     pass.action.colors[0] = .{ .load_action = .CLEAR, .clear_value = .{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1.0 } };
 
     sg.beginPass(pass);
-    sg.applyPipeline(state.pip);
+    sg.applyPipeline(if (state.wireframe) state.pip_wireframe else state.pip);
+
+    var chunk_it = state.terrain.chunks.valueIterator();
+    while (chunk_it.next()) |chunk_ptr| {
+        submit_mesh(&chunk_ptr.*.mesh);
+    }
 
     for (state.meshes.items) |*mesh| {
-        var bind: sg.Bindings = .{};
-        bind.vertex_buffers[0] = mesh.vbuf;
-        bind.vertex_buffers[1] = mesh.nbuf;
-        bind.index_buffer = mesh.ibuf;
-        const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
-        const fs_params = shader.FsParams{
-            .base_color = mesh.color.toArray(),
-            .ambient = state.ambient_light.toArray(),
-            .light_color = state.light_color.toArray(),
-            .light_pos = state.light_pos.toArray(),
-        };
-
-        sg.applyBindings(bind);
-        sg.applyUniforms(shader.UB_vs_params, sg.asRange(&vs_params));
-        sg.applyUniforms(shader.UB_fs_params, sg.asRange(&fs_params));
-        sg.draw(0, @intCast(mesh.indices.items.len), 1);
+        submit_mesh(mesh);
     }
 
     sg.endPass();
     sg.commit();
 
     state.input.update();
+}
+
+fn submit_mesh(mesh: *const Mesh) void {
+    const use_wireframe = state.wireframe and mesh.wireframe_ibuf.id != 0;
+
+    var bind: sg.Bindings = .{};
+    bind.vertex_buffers[0] = mesh.vbuf;
+    bind.vertex_buffers[1] = mesh.nbuf;
+    bind.index_buffer = if (use_wireframe) mesh.wireframe_ibuf else mesh.ibuf;
+    const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
+    const fs_params = shader.FsParams{
+        .base_color = mesh.color.toArray(),
+        .ambient = state.ambient_light.toArray(),
+        .light_color = state.light_color.toArray(),
+        .light_pos = state.light_pos.toArray(),
+    };
+
+    sg.applyBindings(bind);
+    sg.applyUniforms(shader.UB_vs_params, sg.asRange(&vs_params));
+    sg.applyUniforms(shader.UB_fs_params, sg.asRange(&fs_params));
+    const num_indices = if (use_wireframe) mesh.wireframe_indices.items.len else mesh.indices.items.len;
+    sg.draw(0, @intCast(num_indices), 1);
 }
 
 export fn event_handler(maybe_event: [*c]const sapp.Event) void {

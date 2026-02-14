@@ -1,7 +1,7 @@
 const std = @import("std");
 const za = @import("zalgebra");
 const Vec3 = za.Vec3;
-const lib = @import("main.zig");
+const lib = @import("mesh.zig");
 
 const BUF_LEN = 1024;
 
