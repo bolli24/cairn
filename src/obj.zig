@@ -20,7 +20,7 @@ pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !
     var raw_normals: std.ArrayList(Vec3) = .empty;
     defer raw_normals.deinit(allocator);
 
-    var mesh = lib.Mesh{.allocator = allocator};
+    var mesh = lib.Mesh{};
 
     while (true) {
         _ = reader.interface.streamDelimiter(&writer, '\n') catch |err| switch (err) {
@@ -140,7 +140,7 @@ fn parseFace(
 
 test "load_mesh_from_obj parses vertices, normals and indices" {
     var data = try load_mesh_from_obj(std.testing.allocator, "res/suzanne.obj");
-    defer data.deinit();
+    defer data.deinit(std.testing.allocator);
     try std.testing.expect(data.vertices.items.len > 0);
     try std.testing.expect(data.normals.items.len > 0);
     try std.testing.expect(data.indices.items.len > 0);

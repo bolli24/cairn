@@ -37,7 +37,7 @@ pub const Mesh = struct {
     ibuf: sg.Buffer = .{},
     nbuf: sg.Buffer = .{},
     transform: Transform = .{},
-    allocator: std.mem.Allocator,
+    color: Vec3 = Vec3.one().scale(0.5),
 
     fn init(vertices: []const Vec3, indices: []const u16, allocator: std.mem.Allocator) !Self {
         var self: Self = .{ .allocator = allocator };
@@ -48,10 +48,10 @@ pub const Mesh = struct {
         return self;
     }
 
-    pub fn deinit(self: *Self) void {
-        self.vertices.deinit(self.allocator);
-        self.normals.deinit(self.allocator);
-        self.indices.deinit(self.allocator);
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        self.vertices.deinit(allocator);
+        self.normals.deinit(allocator);
+        self.indices.deinit(allocator);
     }
 
     fn upload(self: *Self) void {
@@ -77,11 +77,11 @@ pub const Mesh = struct {
         });
     }
 
-    fn clone(self: *Self) !Self {
+    fn clone(self: *Self, allocator: std.mem.Allocator) !Self {
         const new_mesh = Self{
-            .vertices = try self.vertices.clone(self.allocator),
-            .normals = try self.normals.clone(self.allocator),
-            .indices = try self.indices.clone(self.allocator),
+            .vertices = try self.vertices.clone(allocator),
+            .normals = try self.normals.clone(allocator),
+            .indices = try self.indices.clone(allocator),
         };
 
         return new_mesh;
@@ -90,7 +90,7 @@ pub const Mesh = struct {
 
 const Camera = struct {
     const Self = @This();
-    transform: Transform = .{ .position = Vec3.new(0.0, 1.5, 4.0) },
+    transform: Transform = .{ .position = Vec3.new(0, 0, 4.0) },
     pitch: f32 = 0.0,
     yaw: f32 = 0.0,
     _mouse_start_pos: Vec2 = Vec2.zero(),
@@ -139,10 +139,13 @@ const State = struct {
     meshes: std.ArrayList(Mesh) = .empty,
     camera: Camera = .{},
     input: InputState = .{},
+    light_color: Vec3 = .new(1, 1, 1),
+    light_pos: Vec3 = .new(40, 40, 40),
+    ambient_light: Vec3 = .new(0.2, 0.2, 0.2),
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
-            mesh.deinit();
+            mesh.deinit(gpa.allocator());
         }
         self.meshes.deinit(gpa.allocator());
     }
@@ -165,6 +168,8 @@ export fn init() void {
     state.add_mesh(suzanne) catch return;
 
     const shd = sg.makeShader(shader.basicShaderDesc(sg.queryBackend()));
+
+    std.debug.print("{d}", .{sg.queryBackend()});
 
     var pip_desc = sg.PipelineDesc{
         .shader = shd,
@@ -208,10 +213,10 @@ export fn frame() void {
         bind.index_buffer = mesh.ibuf;
         const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
         const fs_params = shader.FsParams{
-            .base_color = .{ 0.5, 0.1, 1.0 },
-            .ambient = .{ 0.2, 0.2, 0.2 },
-            .light_color = .{ 0.1, 0.5, 0.1 },
-            .light_pos = .{ 4.0, 4.0, 4.0 },
+            .base_color = mesh.color.toArray(),
+            .ambient = state.ambient_light.toArray(),
+            .light_color = state.light_color.toArray(),
+            .light_pos = state.light_pos.toArray(),
         };
 
         sg.applyBindings(bind);
