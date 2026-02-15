@@ -14,6 +14,7 @@ pub const InputState = struct {
     keys: [MAX_KEY]KeyState = [_]KeyState{.up} ** MAX_KEY,
     mouse_buttons: [3]KeyState = [_]KeyState{.up} ** 3,
     mouse_delta: Vec2 = Vec2.zero(),
+    scroll_delta: Vec2 = Vec2.zero(),
 
     pub fn key_pressed(self: *const Self, key: sapp.Keycode) bool {
         return self.getKey(key) == .pressed;
@@ -80,6 +81,7 @@ pub const InputState = struct {
             }
         }
         self.mouse_delta = Vec2.zero();
+        self.scroll_delta = Vec2.zero();
         for (&self.mouse_buttons) |*b| {
             switch (b.*) {
                 .pressed => b.* = .down,

@@ -22,7 +22,6 @@ const terrain_mod = @import("terrain.zig");
 const mesh_mod = @import("mesh.zig");
 pub const Mesh = mesh_mod.Mesh;
 const Vertex = mesh_mod.Vertex;
-const Transform = mesh_mod.Transform;
 const Camera = @import("camera.zig").Camera;
 const Chunk = terrain_mod.Chunk;
 const Terrain = terrain_mod.Terrain;
@@ -84,9 +83,8 @@ export fn init() void {
 
     const terrain_size = za.Vec3_usize.new(6, 2, 6);
     state.terrain = terrain_mod.Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
-    state.camera.transform.position = Vec3.new(
+    state.camera.target_pos = Vec2.new(
         @floatFromInt(terrain_size.x() * terrain_mod.CHUNK_SIZE / 2),
-        @floatFromInt(terrain_size.y() * terrain_mod.CHUNK_SIZE + 2),
         @floatFromInt(terrain_size.z() * terrain_mod.CHUNK_SIZE / 2),
     );
 
@@ -133,8 +131,7 @@ export fn frame() void {
     }
 
     if (state.input.mouse_pressed(.LEFT)) {
-        const forward = state.camera.transform.rotation.rotateVec(Vec3.new(0, 0, -1));
-        if (state.terrain.raycast(state.camera.transform.position, forward, 500.0)) |hit| {
+        if (state.terrain.raycast(state.camera.transform.position, state.camera.forward(), 500.0)) |hit| {
             state.terrain.set_block(hit.previous, .ground, true);
         }
     }
@@ -193,6 +190,9 @@ export fn event_handler(maybe_event: [*c]const sapp.Event) void {
         .MOUSE_UP => state.input.setMouse(event.mouse_button, .released),
         .MOUSE_MOVE => {
             state.input.mouse_delta = state.input.mouse_delta.add(Vec2.new(event.mouse_dx, event.mouse_dy));
+        },
+        .MOUSE_SCROLL => {
+            state.input.scroll_delta = state.input.scroll_delta.add(Vec2.new(event.scroll_x, event.scroll_y));
         },
         else => {},
     }
