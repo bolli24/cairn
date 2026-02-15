@@ -74,9 +74,11 @@ pub fn build(b: *std.Build) !void {
     // If neither case applies to you, feel free to delete the declaration you
     // don't need and to put everything under a single module.
 
-    var shader_module = try createShaderModule(b, dep_sokol);
-
+    var shader_module = try createShaderModule(b, dep_sokol, "src/shader.glsl");
     shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
+
+    var line_shader_module = try createShaderModule(b, dep_sokol, "src/line.glsl");
+    line_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
 
     const exe = b.addExecutable(.{
         .name = "voxel_zig",
@@ -109,6 +111,10 @@ pub fn build(b: *std.Build) !void {
                 .{
                     .name = "shader",
                     .module = shader_module,
+                },
+                .{
+                    .name = "line_shader",
+                    .module = line_shader_module,
                 },
             },
         }),
@@ -194,13 +200,14 @@ pub fn build(b: *std.Build) !void {
     // and reading its source code will allow you to master it.
 }
 
-fn createShaderModule(b: *std.Build, dep_sokol: *std.Build.Dependency) !*std.Build.Module {
+fn createShaderModule(b: *std.Build, dep_sokol: *std.Build.Dependency, comptime glsl_path: []const u8) !*std.Build.Module {
+    const name = comptime std.fs.path.stem(glsl_path);
     const mod_sokol = dep_sokol.module("sokol");
     const dep_shdc = dep_sokol.builder.dependency("shdc", .{});
-    return sokol.shdc.createModule(b, "shader", mod_sokol, .{
+    return sokol.shdc.createModule(b, name, mod_sokol, .{
         .shdc_dep = dep_shdc,
-        .input = "src/shader.glsl",
-        .output = "shader.zig",
+        .input = glsl_path,
+        .output = name ++ ".zig",
         .slang = .{
             .glsl410 = true,
             .glsl300es = true,

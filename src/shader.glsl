@@ -11,7 +11,9 @@ layout(binding=0) uniform vs_params {
 };
 
 in vec4 position;
+in vec4 aUv;
 in vec4 aNormal;
+in vec4 color0;
 
 out vec4 normal;
 out vec4 frag_pos;

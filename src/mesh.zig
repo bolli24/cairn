@@ -1,7 +1,9 @@
 const std = @import("std");
 
 const za = @import("zalgebra");
+const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
+const Vec4 = za.Vec4;
 const Quat = za.Quat;
 
 const sokol = @import("sokol");
@@ -13,7 +15,12 @@ pub const Transform = struct {
     scale: Vec3 = .one(),
 };
 
-pub const Vertex = struct { pos: Vec3, normal: Vec3 };
+pub const Vertex = struct {
+    pos: Vec3 = .zero(),
+    normal: Vec3 = .zero(),
+    uv: Vec2 = .zero(),
+    color: Vec4 = .one(),
+};
 
 pub const Mesh = struct {
     const Self = @This();

@@ -16,6 +16,7 @@ const sglue = sokol.glue;
 const saudio = sokol.audio;
 const slog = sokol.log;
 const shader = @import("shader");
+const line_shader = @import("line_shader");
 
 const obj = @import("obj.zig");
 const terrain_mod = @import("terrain.zig");
@@ -25,6 +26,7 @@ const Vertex = mesh_mod.Vertex;
 const Camera = @import("camera.zig").Camera;
 const Chunk = terrain_mod.Chunk;
 const Terrain = terrain_mod.Terrain;
+const Shapes = @import("shapes.zig").Shapes;
 
 const input = @import("input.zig");
 const InputState = input.InputState;
@@ -46,6 +48,7 @@ const State = struct {
     light_color: Vec3 = .new(1, 1, 1),
     light_dir: Vec3 = Vec3.new(0.5, 1.0, 0.3).norm(),
     ambient_light: Vec3 = .new(0.2, 0.2, 0.2),
+    shapes: Shapes = undefined,
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -53,6 +56,7 @@ const State = struct {
         }
         self.meshes.deinit(gpa.allocator());
         self.terrain.deinit();
+        self.shapes.deinit();
     }
 
     fn add_mesh(self: *@This(), mesh: Mesh) !void {
@@ -113,12 +117,52 @@ export fn init() void {
     pip_desc.layout.attrs[shader.ATTR_basic_position].format = .FLOAT3;
     pip_desc.layout.attrs[shader.ATTR_basic_aNormal].format = .FLOAT3;
     pip_desc.layout.attrs[shader.ATTR_basic_aNormal].offset = @offsetOf(Vertex, "normal");
+    pip_desc.layout.attrs[shader.ATTR_basic_aUv].format = .FLOAT2;
+    pip_desc.layout.attrs[shader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
+    pip_desc.layout.attrs[shader.ATTR_basic_color0].format = .FLOAT4;
+    pip_desc.layout.attrs[shader.ATTR_basic_color0].offset = @offsetOf(Vertex, "color");
 
     state.pip = sg.makePipeline(pip_desc);
 
     pip_desc.primitive_type = .LINES;
     pip_desc.label = "wireframe-pipeline";
+
     state.pip_wireframe = sg.makePipeline(pip_desc);
+
+    const line_shd = sg.makeShader(line_shader.basicShaderDesc(sg.queryBackend()));
+    var line_pip_desc = sg.PipelineDesc{
+        .shader = line_shd,
+        .index_type = .UINT16,
+        .cull_mode = .NONE,
+        .depth = .{
+            .write_enabled = true,
+            .compare = .LESS_EQUAL,
+        },
+        .label = "shapes-pipeline",
+    };
+    line_pip_desc.colors[0] = .{
+        .blend = .{
+            .enabled = true,
+            .src_factor_rgb = .SRC_ALPHA,
+            .dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+            .src_factor_alpha = .SRC_ALPHA,
+            .dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+        },
+    };
+    line_pip_desc.layout.buffers[0].stride = @sizeOf(Vertex);
+    line_pip_desc.layout.attrs[line_shader.ATTR_basic_position].format = .FLOAT3;
+    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aNormal].format = .FLOAT3;
+    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aNormal].offset = @offsetOf(Vertex, "normal");
+    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aUv].format = .FLOAT2;
+    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
+    line_pip_desc.layout.attrs[line_shader.ATTR_basic_color0].format = .FLOAT4;
+    line_pip_desc.layout.attrs[line_shader.ATTR_basic_color0].offset = @offsetOf(Vertex, "color");
+
+    state.shapes = .{
+        .camera = &state.camera,
+        .pipeline = sg.makePipeline(line_pip_desc),
+        .allocator = gpa.allocator(),
+    };
 }
 
 export fn frame() void {
@@ -152,6 +196,14 @@ export fn frame() void {
     for (state.meshes.items) |*mesh| {
         submit_mesh(mesh);
     }
+
+    // Test lines
+    state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(10, 20, 0), Vec4.new(1, 0, 0, 1), 0.2);
+    state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(0, 30, 0), Vec4.new(0, 1, 0, 1), 0.2);
+    state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(0, 20, 10), Vec4.new(0, 0, 1, 1), 0.2);
+
+    sg.applyPipeline(state.shapes.pipeline);
+    state.shapes.draw_all();
 
     sg.endPass();
     sg.commit();
