@@ -45,7 +45,7 @@ const State = struct {
     camera: Camera = .{},
     input: InputState = .{},
     light_color: Vec3 = .new(1, 1, 1),
-    light_pos: Vec3 = .new(40, 40, 40),
+    light_dir: Vec3 = Vec3.new(0.5, 1.0, 0.3).norm(),
     ambient_light: Vec3 = .new(0.2, 0.2, 0.2),
 
     fn deinit(self: *@This()) void {
@@ -82,7 +82,13 @@ export fn init() void {
         // .cellular_jitter_mod = 0.88,
     };
 
-    state.terrain = terrain_mod.Terrain.generate_with_noise(gpa.allocator(), noise, .new(6, 2, 6));
+    const terrain_size = za.Vec3_usize.new(6, 2, 6);
+    state.terrain = terrain_mod.Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
+    state.camera.transform.position = Vec3.new(
+        @floatFromInt(terrain_size.x() * terrain_mod.CHUNK_SIZE / 2),
+        @floatFromInt(terrain_size.y() * terrain_mod.CHUNK_SIZE + 2),
+        @floatFromInt(terrain_size.z() * terrain_mod.CHUNK_SIZE / 2),
+    );
 
     var suzanne = obj.load_mesh_from_obj(gpa.allocator(), "res/suzanne.obj") catch return;
     suzanne.transform.position = Vec3.new(0, 10, 0);
@@ -167,7 +173,7 @@ fn submit_mesh(mesh: *const Mesh) void {
         .base_color = mesh.color.toArray(),
         .ambient = state.ambient_light.toArray(),
         .light_color = state.light_color.toArray(),
-        .light_pos = state.light_pos.toArray(),
+        .light_dir = state.light_dir.toArray(),
     };
 
     sg.applyBindings(bind);
@@ -219,11 +225,8 @@ test {
 }
 
 fn compute_vsparams(rx: f32, ry: f32, mesh: *const Mesh, camera: *const Camera) shader.VsParams {
-    const w = sapp.widthf();
-    const h = sapp.heightf();
-    const proj = za.perspective(60.0, w / h, 0.01, 100);
-    const view = camera.transform.rotation.inv().toMat4()
-        .mul(Mat4.fromTranslate(camera.transform.position.negate()));
+    const proj = camera.projectionMatrix();
+    const view = camera.viewMatrix();
     const model = Mat4.fromTranslate(mesh.transform.position).mul(Mat4.fromEulerAngles(Vec3.new(rx, ry, 0)));
 
     return .{

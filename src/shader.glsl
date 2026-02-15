@@ -28,7 +28,7 @@ layout(binding=1) uniform fs_params {
     vec3 base_color;
     vec3 ambient;
     vec3 light_color;
-    vec3 light_pos;
+    vec3 light_dir;
 };
 
 in vec3 normal;
@@ -37,8 +37,7 @@ in vec3 frag_pos;
 out vec3 frag_color;
 
 void main() {
-    vec3 light_dir = normalize(light_pos - frag_pos);
-    float diff = max(dot(normal, light_dir), 0.0);
+    float diff = max(dot(normalize(normal), normalize(light_dir)), 0.0);
     vec3 diffuse = diff * light_color;
     vec3 result = (ambient + diffuse) * base_color;
 
