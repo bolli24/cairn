@@ -4,6 +4,7 @@ const math = std.math;
 const za = @import("zalgebra");
 const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
+const Vec4 = za.Vec4;
 const Mat4 = za.Mat4;
 const Quat = za.Quat;
 
@@ -95,6 +96,27 @@ pub const Camera = struct {
         }
 
         return rot;
+    }
+
+    /// Unprojects a screen-space pixel coordinate to a world-space ray direction.
+    pub fn screen_to_ray(self: *const Self, screen_pos: Vec2) Vec3 {
+        // Convert pixel coords to NDC [-1, 1]
+        const ndc_x = (2.0 * screen_pos.x() / sapp.widthf()) - 1.0;
+        const ndc_y = 1.0 - (2.0 * screen_pos.y() / sapp.heightf());
+
+        // Clip-space point on the near plane
+        const clip = Vec4.new(ndc_x, ndc_y, -1.0, 1.0);
+
+        // Inverse projection -> view space
+        const inv_proj = self.projectionMatrix().inv();
+        const eye_raw = inv_proj.mulByVec4(clip);
+        const eye = Vec4.new(eye_raw.x(), eye_raw.y(), -1.0, 0.0); // direction, not a point
+
+        // Inverse view -> world space
+        const inv_view = self.viewMatrix().inv();
+        const world = inv_view.mulByVec4(eye);
+
+        return Vec3.new(world.x(), world.y(), world.z()).norm();
     }
 
     pub fn forward(self: *const Self) Vec3 {

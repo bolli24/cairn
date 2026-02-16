@@ -30,6 +30,7 @@ const Shapes = @import("shapes.zig").Shapes;
 
 const input = @import("input.zig");
 const InputState = input.InputState;
+const BuildingState = @import("building.zig").BuildingState;
 
 const fastnoise = @import("fastnoise");
 
@@ -49,6 +50,7 @@ const State = struct {
     light_dir: Vec3 = Vec3.new(0.5, 1.0, 0.3).norm(),
     ambient_light: Vec3 = .new(0.2, 0.2, 0.2),
     shapes: Shapes = undefined,
+    building: BuildingState = .{},
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -119,8 +121,6 @@ export fn init() void {
     pip_desc.layout.attrs[shader.ATTR_basic_aNormal].offset = @offsetOf(Vertex, "normal");
     pip_desc.layout.attrs[shader.ATTR_basic_aUv].format = .FLOAT2;
     pip_desc.layout.attrs[shader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
-    pip_desc.layout.attrs[shader.ATTR_basic_color0].format = .FLOAT4;
-    pip_desc.layout.attrs[shader.ATTR_basic_color0].offset = @offsetOf(Vertex, "color");
 
     state.pip = sg.makePipeline(pip_desc);
 
@@ -151,8 +151,6 @@ export fn init() void {
     };
     line_pip_desc.layout.buffers[0].stride = @sizeOf(Vertex);
     line_pip_desc.layout.attrs[line_shader.ATTR_basic_position].format = .FLOAT3;
-    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aNormal].format = .FLOAT3;
-    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aNormal].offset = @offsetOf(Vertex, "normal");
     line_pip_desc.layout.attrs[line_shader.ATTR_basic_aUv].format = .FLOAT2;
     line_pip_desc.layout.attrs[line_shader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
     line_pip_desc.layout.attrs[line_shader.ATTR_basic_color0].format = .FLOAT4;
@@ -174,7 +172,9 @@ export fn frame() void {
         state.wireframe = !state.wireframe;
     }
 
-    if (state.input.mouse_pressed(.LEFT)) {
+    state.building.update(&state.input, &state.camera, &state.terrain, &state.shapes);
+
+    if (!state.building.active and state.input.mouse_pressed(.LEFT)) {
         if (state.terrain.raycast(state.camera.transform.position, state.camera.forward(), 500.0)) |hit| {
             state.terrain.set_block(hit.previous, .ground, true);
         }
@@ -241,6 +241,7 @@ export fn event_handler(maybe_event: [*c]const sapp.Event) void {
         .MOUSE_DOWN => state.input.setMouse(event.mouse_button, .pressed),
         .MOUSE_UP => state.input.setMouse(event.mouse_button, .released),
         .MOUSE_MOVE => {
+            state.input.mouse_pos = Vec2.new(event.mouse_x, event.mouse_y);
             state.input.mouse_delta = state.input.mouse_delta.add(Vec2.new(event.mouse_dx, event.mouse_dy));
         },
         .MOUSE_SCROLL => {

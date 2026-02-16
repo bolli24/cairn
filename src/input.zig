@@ -13,6 +13,7 @@ pub const InputState = struct {
     const Self = @This();
     keys: [MAX_KEY]KeyState = [_]KeyState{.up} ** MAX_KEY,
     mouse_buttons: [3]KeyState = [_]KeyState{.up} ** 3,
+    mouse_pos: Vec2 = Vec2.zero(),
     mouse_delta: Vec2 = Vec2.zero(),
     scroll_delta: Vec2 = Vec2.zero(),
 
