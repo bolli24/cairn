@@ -21,10 +21,14 @@ pub const RaycastHit = struct {
     block: Block,
 };
 
+pub const ChunkBlocks = [CHUNK_SIZE][CHUNK_SIZE][CHUNK_SIZE]Block;
+pub const ChunkOverlay = std.AutoHashMap(Vec3_i32, *ChunkBlocks);
+
 pub const Terrain = struct {
     const Self = @This();
     chunks: std.AutoHashMap(Vec3_i32, Chunk),
     allocator: std.mem.Allocator,
+    overlay: ?*const ChunkOverlay = null,
 
     pub fn generate_with_noise(allocator: std.mem.Allocator, noise: fastnoise.Noise(f32), size: za.Vec3_usize) Self {
         var self = Self.init(allocator);
@@ -118,7 +122,7 @@ pub const Terrain = struct {
         );
     }
 
-    fn get_block(self: *const Self, world_pos: Vec3_i32) Block {
+    pub fn get_block(self: *const Self, world_pos: Vec3_i32) Block {
         const chunk = self.chunks.get(world_to_chunk_pos(world_pos)) orelse return .air;
         return chunk.get_block(world_to_local_pos(world_pos));
     }
@@ -171,6 +175,12 @@ pub const Terrain = struct {
                 }
             }
         }
+    }
+
+    /// Remesh the chunk that contains the given world position.
+    pub fn remesh_at(self: *Self, world_pos: Vec3_i32) void {
+        const chunk = self.chunks.getPtr(world_to_chunk_pos(world_pos)) orelse return;
+        chunk.update_mesh_with_overlay(self.allocator, self.overlay);
     }
 
     pub fn raycast(self: *const Self, origin: Vec3, direction: Vec3, range: f32) ?RaycastHit {
@@ -321,14 +331,20 @@ pub const Chunk = struct {
     };
 
     pub fn update_mesh(self: *Self, allocator: std.mem.Allocator) void {
+        self.update_mesh_with_overlay(allocator, null);
+    }
+
+    pub fn update_mesh_with_overlay(self: *Self, allocator: std.mem.Allocator, overlay: ?*const ChunkOverlay) void {
         self.mesh.vertices.clearRetainingCapacity();
         self.mesh.indices.clearRetainingCapacity();
         self.mesh.wireframe_indices.clearRetainingCapacity();
 
+        const blocks: *const ChunkBlocks = if (overlay) |ov| ov.get(self.pos) orelse &self._blocks else &self._blocks;
+
         for (0..CHUNK_SIZE) |x| {
             for (0..CHUNK_SIZE) |y| {
                 for (0..CHUNK_SIZE) |z| {
-                    if (self._blocks[x][y][z] == .air) continue;
+                    if (blocks[x][y][z] == .air) continue;
 
                     const fx: f32 = @floatFromInt(x);
                     const fy: f32 = @floatFromInt(y);
@@ -345,7 +361,7 @@ pub const Chunk = struct {
                             ny >= 0 and ny < CHUNK_SIZE and
                             nz >= 0 and nz < CHUNK_SIZE)
                         {
-                            if (self._blocks[@intCast(nx)][@intCast(ny)][@intCast(nz)] != .air) continue;
+                            if (blocks[@intCast(nx)][@intCast(ny)][@intCast(nz)] != .air) continue;
                         }
 
                         const base: u16 = @intCast(self.mesh.vertices.items.len);

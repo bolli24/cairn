@@ -50,7 +50,7 @@ const State = struct {
     light_dir: Vec3 = Vec3.new(0.5, 1.0, 0.3).norm(),
     ambient_light: Vec3 = .new(0.2, 0.2, 0.2),
     shapes: Shapes = undefined,
-    building: BuildingState = .{},
+    building: BuildingState = undefined,
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -58,6 +58,7 @@ const State = struct {
         }
         self.meshes.deinit(gpa.allocator());
         self.terrain.deinit();
+        self.building.deinit();
         self.shapes.deinit();
     }
 
@@ -72,7 +73,7 @@ export fn init() void {
     sg.setup(.{
         .environment = sglue.environment(),
         .logger = .{ .func = slog.func },
-        .buffer_pool_size = 1024,
+        .buffer_pool_size = 2048,
     });
 
     const noise = fastnoise.Noise(f32){
@@ -80,15 +81,16 @@ export fn init() void {
         .noise_type = .simplex_smooth,
         .frequency = 0.025,
         .gain = 0.40,
-        // .fractal_type = .fbm,
-        // .lacunarity = 0.40,
-        // .cellular_distance = .euclidean,
-        // .cellular_return = .distance2,
-        // .cellular_jitter_mod = 0.88,
+        .fractal_type = .fbm,
+        .lacunarity = 0.40,
+        .cellular_distance = .euclidean,
+        .cellular_return = .distance2,
+        .cellular_jitter_mod = 0.88,
     };
 
-    const terrain_size = za.Vec3_usize.new(6, 2, 6);
+    const terrain_size = za.Vec3_usize.new(12, 3, 12);
     state.terrain = terrain_mod.Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
+    state.building = BuildingState.init(gpa.allocator());
     state.camera.target_pos = Vec2.new(
         @floatFromInt(terrain_size.x() * terrain_mod.CHUNK_SIZE / 2),
         @floatFromInt(terrain_size.z() * terrain_mod.CHUNK_SIZE / 2),
@@ -164,6 +166,8 @@ export fn init() void {
 }
 
 export fn frame() void {
+    var frame_timer = std.time.Timer.start() catch unreachable;
+
     const t = @as(f32, @floatCast(sapp.frameDuration()));
 
     state.camera.update(t, &state.input);
@@ -209,6 +213,9 @@ export fn frame() void {
     sg.commit();
 
     state.input.update();
+
+    const cpu_us = frame_timer.read() / std.time.ns_per_us;
+    std.debug.print("cpu: {d:.1}us ({d:.2}ms)\n", .{ @as(f64, @floatFromInt(cpu_us)), @as(f64, @floatFromInt(cpu_us)) / 1000.0 });
 }
 
 fn submit_mesh(mesh: *const Mesh) void {

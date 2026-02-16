@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const za = @import("zalgebra");
 const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
@@ -9,7 +11,9 @@ const sapp = sokol.app;
 
 const InputState = @import("input.zig").InputState;
 const Camera = @import("camera.zig").Camera;
-const Terrain = @import("terrain.zig").Terrain;
+const terrai_mod = @import("terrain.zig");
+const Terrain = terrai_mod.Terrain;
+const Block = terrai_mod.Block;
 const Shapes = @import("shapes.zig").Shapes;
 
 const MARKER_COLOR = Vec4.new(1, 1, 0, 1);
@@ -25,11 +29,24 @@ pub const BuildingState = struct {
     pos1: ?Vec3_i32 = null,
     pos2: ?Vec3_i32 = null,
     prev_hit: ?Vec3_i32 = null,
+    preview: EditPreview = undefined,
+    preview_active: bool = false,
 
-    pub fn update(self: *Self, input: *InputState, camera: *const Camera, terrain: *const Terrain, shapes: *Shapes) void {
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return .{ .preview = EditPreview.init(allocator) };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.preview.deinit();
+    }
+
+    pub fn update(self: *Self, input: *InputState, camera: *const Camera, terrain: *Terrain, shapes: *Shapes) void {
         if (input.key_pressed(.B)) {
             self.active = !self.active;
             if (self.active) {
+                self.reset();
+            } else {
+                self.revert_preview(terrain);
                 self.reset();
             }
             return;
@@ -39,6 +56,7 @@ pub const BuildingState = struct {
 
         if (input.key_pressed(.ESCAPE)) {
             self.active = false;
+            self.revert_preview(terrain);
             self.reset();
             return;
         }
@@ -65,13 +83,20 @@ pub const BuildingState = struct {
                 draw_cube_marker(shapes, h.pos, LINE_COLOR);
 
                 if (self.prev_hit == null or !self.prev_hit.?.eql(h.pos)) {
+                    if (self.preview_active) {
+                        self.preview.hide(terrain);
+                    }
+                    self.preview.clear();
                     self.prev_hit = h.pos;
-                    // TODO: Apply terrain preview edit along path from pos1 to cursor
+                    self.preview.add_block_path(terrain, self.pos1.?, h.pos, 4, .air, .circle);
+                    self.preview.show(terrain);
+                    self.preview_active = true;
                 }
 
                 if (input.mouse_pressed(.LEFT)) {
                     self.pos2 = h.pos;
                     self.prev_hit = null;
+                    // Preview stays applied; it becomes the confirm preview
                 }
             }
         } else {
@@ -82,7 +107,9 @@ pub const BuildingState = struct {
             shapes.line_3d(p1f.add(Vec3.new(0.5, 0.5, 0.5)), p2f.add(Vec3.new(0.5, 0.5, 0.5)), CONFIRM_COLOR, LINE_THICKNESS);
 
             if (input.key_pressed(.SPACE)) {
-                // TODO: Apply final terrain edit along path from pos1 to pos2
+                self.preview.commit(terrain);
+                self.preview.clear();
+                self.preview_active = false;
                 self.reset();
             }
         }
@@ -93,8 +120,155 @@ pub const BuildingState = struct {
         self.pos2 = null;
         self.prev_hit = null;
     }
+
+    fn revert_preview(self: *Self, terrain: *Terrain) void {
+        if (self.preview_active) {
+            self.preview.hide(terrain);
+            self.preview.clear();
+            self.preview_active = false;
+        }
+    }
 };
 
+pub const Shape = enum { circle, square };
+
+pub const EditPreview = struct {
+    const CS = terrai_mod.CHUNK_SIZE;
+    chunks: terrai_mod.ChunkOverlay,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) @This() {
+        return .{ .chunks = terrai_mod.ChunkOverlay.init(allocator), .allocator = allocator };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        var it = self.chunks.valueIterator();
+        while (it.next()) |ptr| self.allocator.destroy(ptr.*);
+        self.chunks.deinit();
+    }
+
+    pub fn add(self: *@This(), terrain: *Terrain, pos: Vec3_i32, block: Block) void {
+        const chunk_pos = Vec3_i32.new(
+            @divFloor(pos.x(), CS),
+            @divFloor(pos.y(), CS),
+            @divFloor(pos.z(), CS),
+        );
+        const gop = self.chunks.getOrPut(chunk_pos) catch return;
+        if (!gop.found_existing) {
+            // Copy original chunk blocks
+            const chunk = terrain.chunks.getPtr(chunk_pos) orelse {
+                _ = self.chunks.remove(chunk_pos);
+                return;
+            };
+            const overlay_blocks = self.allocator.create(terrai_mod.ChunkBlocks) catch return;
+            overlay_blocks.* = chunk._blocks;
+            gop.value_ptr.* = overlay_blocks;
+        }
+        const lx: usize = @intCast(@mod(pos.x(), CS));
+        const ly: usize = @intCast(@mod(pos.y(), CS));
+        const lz: usize = @intCast(@mod(pos.z(), CS));
+        gop.value_ptr.*[lx][ly][lz] = block;
+    }
+
+    pub fn add_block_path(
+        self: *@This(),
+        terrain: *Terrain,
+        p1: Vec3_i32,
+        p2: Vec3_i32,
+        radius: i32,
+        block: Block,
+        shape: Shape,
+    ) void {
+        // Bounding box expanded by radius in all axes
+        const min_x = @min(p1.x(), p2.x()) - radius;
+        const max_x = @max(p1.x(), p2.x()) + radius;
+        const min_y = @min(p1.y(), p2.y()) - radius;
+        const max_y = @max(p1.y(), p2.y()) + radius;
+        const min_z = @min(p1.z(), p2.z()) - radius;
+        const max_z = @max(p1.z(), p2.z()) + radius;
+
+        // Full 3D segment direction
+        const dx_seg: f32 = @floatFromInt(p2.x() - p1.x());
+        const dy_seg: f32 = @floatFromInt(p2.y() - p1.y());
+        const dz_seg: f32 = @floatFromInt(p2.z() - p1.z());
+        const len_sq = dx_seg * dx_seg + dy_seg * dy_seg + dz_seg * dz_seg;
+
+        const r_sq: f32 = @floatFromInt(radius * radius);
+        const r_f: f32 = @floatFromInt(radius);
+
+        var ix = min_x;
+        while (ix <= max_x) : (ix += 1) {
+            var iy = min_y;
+            while (iy <= max_y) : (iy += 1) {
+                var iz = min_z;
+                while (iz <= max_z) : (iz += 1) {
+                    // Vector from p1 to this point
+                    const px: f32 = @floatFromInt(ix - p1.x());
+                    const py: f32 = @floatFromInt(iy - p1.y());
+                    const pz: f32 = @floatFromInt(iz - p1.z());
+
+                    // Closest point on 3D segment, t clamped to [0,1]
+                    var t: f32 = if (len_sq > 0.0) (px * dx_seg + py * dy_seg + pz * dz_seg) / len_sq else 0.0;
+                    t = @max(0.0, @min(1.0, t));
+
+                    // 3D difference from closest point on segment
+                    const diff_x = px - dx_seg * t;
+                    const diff_y = py - dy_seg * t;
+                    const diff_z = pz - dz_seg * t;
+
+                    const in_shape = switch (shape) {
+                        .circle => diff_x * diff_x + diff_y * diff_y + diff_z * diff_z <= r_sq,
+                        .square => @abs(diff_x) <= r_f and @abs(diff_y) <= r_f and @abs(diff_z) <= r_f,
+                    };
+
+                    if (in_shape) {
+                        self.add(terrain, Vec3_i32.new(ix, iy, iz), block);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Set the overlay on terrain and remesh affected chunks.
+    pub fn show(self: *@This(), terrain: *Terrain) void {
+        terrain.overlay = &self.chunks;
+        self.remesh_affected(terrain);
+    }
+
+    /// Remove the overlay and remesh to restore original appearance.
+    pub fn hide(self: *@This(), terrain: *Terrain) void {
+        terrain.overlay = null;
+        self.remesh_affected(terrain);
+    }
+
+    /// Write edits permanently into terrain data and remesh (no overlay needed after).
+    pub fn commit(self: *@This(), terrain: *Terrain) void {
+        terrain.overlay = null;
+        var it = self.chunks.iterator();
+        while (it.next()) |entry| {
+            const chunk = terrain.chunks.getPtr(entry.key_ptr.*) orelse continue;
+            chunk._blocks = entry.value_ptr.*.*;
+        }
+        self.remesh_affected(terrain);
+    }
+
+    pub fn clear(self: *@This()) void {
+        var it = self.chunks.valueIterator();
+        while (it.next()) |ptr| self.allocator.destroy(ptr.*);
+        self.chunks.clearRetainingCapacity();
+    }
+
+    fn remesh_affected(self: *@This(), terrain: *Terrain) void {
+        var it = self.chunks.keyIterator();
+        while (it.next()) |chunk_pos| {
+            terrain.remesh_at(Vec3_i32.new(
+                chunk_pos.x() * CS,
+                chunk_pos.y() * CS,
+                chunk_pos.z() * CS,
+            ));
+        }
+    }
+};
 
 /// Draws 12 edges of a unit cube at the given voxel position.
 fn draw_cube_marker(shapes: *Shapes, pos: Vec3_i32, color: Vec4) void {
