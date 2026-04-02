@@ -187,6 +187,7 @@ export fn frame() void {
     var pass = sg.Pass{ .swapchain = sglue.swapchain() };
 
     pass.action.colors[0] = .{ .load_action = .CLEAR, .clear_value = .{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1.0 } };
+    pass.action.depth = .{ .load_action = .CLEAR, .clear_value = 1.0 };
 
     sg.beginPass(pass);
     sg.applyPipeline(if (state.wireframe) state.pip_wireframe else state.pip);

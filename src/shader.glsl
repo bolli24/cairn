@@ -12,14 +12,14 @@ layout(binding=0) uniform vs_params {
 
 in vec4 position;
 in vec4 aUv;
-in vec4 aNormal;
+in vec3 aNormal;
 
 out vec4 normal;
 out vec4 frag_pos;
 
 void main() {
     gl_Position = proj * view * model * position;
-    normal = normal_mat * aNormal;
+    normal = vec4(mat3(normal_mat) * aNormal, 0.0);
     frag_pos = model * position;
 }
 @end
