@@ -17,6 +17,7 @@ const saudio = sokol.audio;
 const slog = sokol.log;
 const shader = @import("shader");
 const line_shader = @import("line_shader");
+const shadow_shader = @import("shadow_shader");
 
 const obj = @import("obj.zig");
 const terrain_mod = @import("terrain.zig");
@@ -36,6 +37,23 @@ const fastnoise = @import("fastnoise");
 
 var gpa: std.heap.DebugAllocator(.{}) = .init;
 
+const SHADOW_MAP_SIZE: i32 = 4096;
+
+const Light = struct {
+    color: Vec3 = .new(1, 1, 1),
+    dir: Vec3 = Vec3.new(0.7, 0.6, 0.4).norm(),
+    ambient: Vec3 = .new(0.2, 0.2, 0.2),
+};
+
+const Shadow = struct {
+    depth_img: sg.Image = .{},
+    depth_view: sg.View = .{},
+    tex_view: sg.View = .{},
+    sampler: sg.Sampler = .{},
+    pip: sg.Pipeline = .{},
+    light_view_proj: Mat4 = Mat4.identity(),
+};
+
 const State = struct {
     rx: f32 = 0.0,
     ry: f32 = 0.0,
@@ -46,11 +64,11 @@ const State = struct {
     terrain: Terrain = undefined,
     camera: Camera = .{},
     input: InputState = .{},
-    light_color: Vec3 = .new(1, 1, 1),
-    light_dir: Vec3 = Vec3.new(0.5, 1.0, 0.3).norm(),
-    ambient_light: Vec3 = .new(0.2, 0.2, 0.2),
+    light: Light = .{},
+    show_light_rays: bool = false,
     shapes: Shapes = undefined,
     building: BuildingState = undefined,
+    shadow: Shadow = .{},
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -74,6 +92,30 @@ export fn init() void {
         .environment = sglue.environment(),
         .logger = .{ .func = slog.func },
         .buffer_pool_size = 2048,
+    });
+
+    // Shadow map resources
+    state.shadow.depth_img = sg.makeImage(.{
+        .usage = .{ .depth_stencil_attachment = true },
+        .width = SHADOW_MAP_SIZE,
+        .height = SHADOW_MAP_SIZE,
+        .pixel_format = .DEPTH,
+        .label = "shadow-depth-img",
+    });
+    state.shadow.depth_view = sg.makeView(.{
+        .depth_stencil_attachment = .{ .image = state.shadow.depth_img },
+        .label = "shadow-depth-att-view",
+    });
+    state.shadow.tex_view = sg.makeView(.{
+        .texture = .{ .image = state.shadow.depth_img },
+        .label = "shadow-tex-view",
+    });
+    state.shadow.sampler = sg.makeSampler(.{
+        .min_filter = .LINEAR,
+        .mag_filter = .LINEAR,
+        .wrap_u = .CLAMP_TO_EDGE,
+        .wrap_v = .CLAMP_TO_EDGE,
+        .label = "shadow-sampler",
     });
 
     const noise = fastnoise.Noise(f32){
@@ -100,6 +142,25 @@ export fn init() void {
     suzanne.transform.position = Vec3.new(0, 10, 0);
     suzanne.upload();
     state.add_mesh(suzanne) catch return;
+
+    // Shadow pipeline
+    const shadow_shd = sg.makeShader(shadow_shader.shadowShaderDesc(sg.queryBackend()));
+    var shadow_pip_desc = sg.PipelineDesc{
+        .shader = shadow_shd,
+        .index_type = .UINT16,
+        .cull_mode = .BACK,
+        .face_winding = .CCW,
+        .depth = .{
+            .write_enabled = true,
+            .compare = .LESS_EQUAL,
+            .pixel_format = .DEPTH,
+        },
+        .label = "shadow-pipeline",
+    };
+    shadow_pip_desc.colors[0].pixel_format = .NONE;
+    shadow_pip_desc.layout.buffers[0].stride = @sizeOf(Vertex);
+    shadow_pip_desc.layout.attrs[shadow_shader.ATTR_shadow_position].format = .FLOAT3;
+    state.shadow.pip = sg.makePipeline(shadow_pip_desc);
 
     const shd = sg.makeShader(shader.basicShaderDesc(sg.queryBackend()));
 
@@ -163,6 +224,8 @@ export fn init() void {
         .pipeline = sg.makePipeline(line_pip_desc),
         .allocator = gpa.allocator(),
     };
+
+    state.shadow.light_view_proj = compute_light_view_proj();
 }
 
 export fn frame() void {
@@ -176,6 +239,10 @@ export fn frame() void {
         state.wireframe = !state.wireframe;
     }
 
+    if (state.input.key_pressed(.L)) {
+        state.show_light_rays = !state.show_light_rays;
+    }
+
     state.building.update(&state.input, &state.camera, &state.terrain, &state.shapes);
 
     if (!state.building.active and state.input.mouse_pressed(.LEFT)) {
@@ -184,15 +251,33 @@ export fn frame() void {
         }
     }
 
-    var pass = sg.Pass{ .swapchain = sglue.swapchain() };
+    // Shadow pass
+    var shadow_pass = sg.Pass{};
+    shadow_pass.action.depth = .{ .load_action = .CLEAR, .clear_value = 1.0 };
+    shadow_pass.attachments.depth_stencil = state.shadow.depth_view;
 
+    sg.beginPass(shadow_pass);
+    sg.applyPipeline(state.shadow.pip);
+
+    var chunk_it = state.terrain.chunks.valueIterator();
+    while (chunk_it.next()) |chunk_ptr| {
+        if (chunk_ptr.mesh.vertices.items.len == 0) continue;
+        submit_shadow_mesh(&chunk_ptr.*.mesh);
+    }
+    for (state.meshes.items) |*mesh| {
+        submit_shadow_mesh(mesh);
+    }
+    sg.endPass();
+
+    // Main pass
+    var pass = sg.Pass{ .swapchain = sglue.swapchain() };
     pass.action.colors[0] = .{ .load_action = .CLEAR, .clear_value = .{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1.0 } };
     pass.action.depth = .{ .load_action = .CLEAR, .clear_value = 1.0 };
 
     sg.beginPass(pass);
     sg.applyPipeline(if (state.wireframe) state.pip_wireframe else state.pip);
 
-    var chunk_it = state.terrain.chunks.valueIterator();
+    chunk_it = state.terrain.chunks.valueIterator();
     while (chunk_it.next()) |chunk_ptr| {
         if (chunk_ptr.mesh.vertices.items.len == 0) continue;
         submit_mesh(&chunk_ptr.*.mesh);
@@ -207,6 +292,26 @@ export fn frame() void {
     state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(0, 30, 0), Vec4.new(0, 1, 0, 1), 0.2);
     state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(0, 20, 10), Vec4.new(0, 0, 1, 1), 0.2);
 
+    if (state.show_light_rays) {
+        if (state.terrain.raycast(state.camera.transform.position, state.camera.screen_to_ray(state.input.mouse_pos), 500.0)) |hit| {
+            const p = hit.pos;
+            const x: f32 = @floatFromInt(p.x());
+            const y: f32 = @floatFromInt(p.y());
+            const z: f32 = @floatFromInt(p.z());
+            const ray = state.light.dir.scale(2.0);
+            const color = Vec4.new(1, 1, 0, 1);
+            const top_vertices = [4]Vec3{
+                Vec3.new(x, y + 1, z),
+                Vec3.new(x + 1, y + 1, z),
+                Vec3.new(x, y + 1, z + 1),
+                Vec3.new(x + 1, y + 1, z + 1),
+            };
+            for (top_vertices) |v| {
+                state.shapes.line_3d(v, v.add(ray), color, 0.05);
+            }
+        }
+    }
+
     sg.applyPipeline(state.shapes.pipeline);
     state.shapes.draw_all();
 
@@ -216,7 +321,8 @@ export fn frame() void {
     state.input.update();
 
     const cpu_us = frame_timer.read() / std.time.ns_per_us;
-    std.debug.print("cpu: {d:.1}us ({d:.2}ms)\n", .{ @as(f64, @floatFromInt(cpu_us)), @as(f64, @floatFromInt(cpu_us)) / 1000.0 });
+    _ = cpu_us;
+    // std.debug.print("cpu: {d:.1}us ({d:.2}ms)\n", .{ @as(f64, @floatFromInt(cpu_us)), @as(f64, @floatFromInt(cpu_us)) / 1000.0 });
 }
 
 fn submit_mesh(mesh: *const Mesh) void {
@@ -225,12 +331,14 @@ fn submit_mesh(mesh: *const Mesh) void {
     var bind: sg.Bindings = .{};
     bind.vertex_buffers[0] = mesh.vbuf;
     bind.index_buffer = if (use_wireframe) mesh.wireframe_ibuf else mesh.ibuf;
+    bind.views[shader.VIEW_shadow_map] = state.shadow.tex_view;
+    bind.samplers[shader.SMP_shadow_smp] = state.shadow.sampler;
     const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
     const fs_params = shader.FsParams{
         .base_color = mesh.color.toArray(),
-        .ambient = state.ambient_light.toArray(),
-        .light_color = state.light_color.toArray(),
-        .light_dir = state.light_dir.toArray(),
+        .ambient = state.light.ambient.toArray(),
+        .light_color = state.light.color.toArray(),
+        .light_dir = state.light.dir.toArray(),
     };
 
     sg.applyBindings(bind);
@@ -295,5 +403,29 @@ fn compute_vsparams(rx: f32, ry: f32, mesh: *const Mesh, camera: *const Camera) 
         .view = view,
         .proj = proj,
         .normal_mat = model.inv().transpose(),
+        .light_space = state.shadow.light_view_proj,
     };
+}
+
+fn compute_light_view_proj() Mat4 {
+    const scene_center = Vec3.new(96.0, 24.0, 96.0);
+    const light_dir = state.light.dir;
+    const light_eye = scene_center.add(light_dir.scale(250.0));
+    const light_view = Mat4.lookAt(light_eye, scene_center, Vec3.new(0.0, 0.0, 1.0));
+    const light_proj = Mat4.orthographic(-150.0, 150.0, -150.0, 150.0, 0.1, 600.0);
+    return light_proj.mul(light_view);
+}
+
+fn submit_shadow_mesh(mesh: *const Mesh) void {
+    var bind: sg.Bindings = .{};
+    bind.vertex_buffers[0] = mesh.vbuf;
+    bind.index_buffer = mesh.ibuf;
+
+    const model = Mat4.fromTranslate(mesh.transform.position)
+        .mul(Mat4.fromEulerAngles(Vec3.new(state.rx, state.ry, 0)));
+    const vs_params = shadow_shader.VsParams{ .mvp = state.shadow.light_view_proj.mul(model) };
+
+    sg.applyBindings(bind);
+    sg.applyUniforms(shadow_shader.UB_vs_params, sg.asRange(&vs_params));
+    sg.draw(0, @intCast(mesh.indices.items.len), 1);
 }

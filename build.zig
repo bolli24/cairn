@@ -80,6 +80,9 @@ pub fn build(b: *std.Build) !void {
     var line_shader_module = try createShaderModule(b, dep_sokol, "src/line.glsl");
     line_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
 
+    var shadow_shader_module = try createShaderModule(b, dep_sokol, "src/shadow.glsl");
+    shadow_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
+
     const exe = b.addExecutable(.{
         .name = "voxel_zig",
         .root_module = b.createModule(.{
@@ -115,6 +118,10 @@ pub fn build(b: *std.Build) !void {
                 .{
                     .name = "line_shader",
                     .module = line_shader_module,
+                },
+                .{
+                    .name = "shadow_shader",
+                    .module = shadow_shader_module,
                 },
             },
         }),
