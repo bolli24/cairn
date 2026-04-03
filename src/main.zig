@@ -94,6 +94,8 @@ export fn init() void {
         .buffer_pool_size = 2048,
     });
 
+    std.debug.print("Backend: {s}\n", .{@tagName(sg.queryBackend())});
+
     // Shadow map resources
     state.shadow.depth_img = sg.makeImage(.{
         .usage = .{ .depth_stencil_attachment = true },
@@ -163,8 +165,6 @@ export fn init() void {
     state.shadow.pip = sg.makePipeline(shadow_pip_desc);
 
     const shd = sg.makeShader(shader.basicShaderDesc(sg.queryBackend()));
-
-    std.debug.print("{d}", .{sg.queryBackend()});
 
     var pip_desc = sg.PipelineDesc{
         .shader = shd,
