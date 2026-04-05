@@ -82,11 +82,23 @@ float sample_shadow(vec4 light_space_pos, float bias) {
 }
 
 void main() {
-    float diff = max(dot(normalize(normal), normalize(light_dir)), 0.0);
+    vec3 n = normalize(normal);
+    float face_brightness;
+    // NOTE: assumes axis-aligned normals; replace with smooth formula when adding non-voxel geometry
+    if (n.y > 0.5) {
+        face_brightness = 1.0;  // +Y
+    } else if (n.y < -0.5) {
+        face_brightness = 0.5;  // -Y
+    } else if (abs(n.x) > 0.5) {
+        face_brightness = 0.8;  // ±X
+    } else {
+        face_brightness = 0.6;  // ±Z
+    }
+    float diff = max(dot(n, normalize(light_dir)), 0.0);
     float bias = max(0.0015 * (1.0 - diff), 0.0001);
     float shadow = sample_shadow(frag_pos_light_space, bias);
     vec3 diffuse = diff * light_color;
-    vec3 result = (ambient + diffuse * (1.0 - shadow)) * base_color;
+    vec3 result = (ambient + diffuse * (1.0 - shadow)) * base_color * face_brightness;
     frag_color = result;
 }
 @end
