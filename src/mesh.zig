@@ -20,6 +20,7 @@ pub const Vertex = struct {
     normal: Vec3 = .zero(),
     uv: Vec2 = .zero(),
     color: Vec4 = .one(),
+    ao: f32 = 1.0,
 };
 
 pub const Mesh = struct {

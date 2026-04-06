@@ -14,10 +14,12 @@ layout(binding=0) uniform vs_params {
 in vec4 position;
 in vec4 aUv;
 in vec3 aNormal;
+in float ao;
 
 out vec3 normal;
 out vec4 frag_pos;
 out vec4 frag_pos_light_space;
+out float ao_level;
 
 void main() {
     vec4 world_pos = model * position;
@@ -25,6 +27,7 @@ void main() {
     normal = mat3(normal_mat) * aNormal;
     frag_pos = world_pos;
     frag_pos_light_space = light_space * world_pos;
+    ao_level = ao;
     #if !SOKOL_GLSL
     frag_pos_light_space.y = -frag_pos_light_space.y;
     #endif
@@ -37,6 +40,7 @@ layout(binding=1) uniform fs_params {
     vec3 ambient;
     vec3 light_color;
     vec3 light_dir;
+    float ao_strength;
 };
 
 layout(binding=0) uniform texture2D shadow_map;
@@ -45,6 +49,7 @@ layout(binding=0) uniform sampler shadow_smp;
 in vec3 normal;
 in vec4 frag_pos;
 in vec4 frag_pos_light_space;
+in float ao_level;
 
 out vec3 frag_color;
 
@@ -98,7 +103,7 @@ void main() {
     float bias = max(0.0015 * (1.0 - diff), 0.0001);
     float shadow = sample_shadow(frag_pos_light_space, bias);
     vec3 diffuse = diff * light_color;
-    vec3 result = (ambient + diffuse * (1.0 - shadow)) * base_color * face_brightness;
+    vec3 result = (ambient + diffuse * (1.0 - shadow)) * base_color * face_brightness * mix(1.0, ao_level, ao_strength);
     frag_color = result;
 }
 @end

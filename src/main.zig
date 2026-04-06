@@ -184,6 +184,8 @@ export fn init() void {
     pip_desc.layout.attrs[shader.ATTR_basic_aNormal].offset = @offsetOf(Vertex, "normal");
     pip_desc.layout.attrs[shader.ATTR_basic_aUv].format = .FLOAT2;
     pip_desc.layout.attrs[shader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
+    pip_desc.layout.attrs[shader.ATTR_basic_ao].format = .FLOAT;
+    pip_desc.layout.attrs[shader.ATTR_basic_ao].offset = @offsetOf(Vertex, "ao");
 
     state.pip = sg.makePipeline(pip_desc);
 
@@ -339,6 +341,7 @@ fn submit_mesh(mesh: *const Mesh) void {
         .ambient = state.light.ambient.toArray(),
         .light_color = state.light.color.toArray(),
         .light_dir = state.light.dir.toArray(),
+        .ao_strength = 0.6,
     };
 
     sg.applyBindings(bind);
