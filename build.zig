@@ -42,9 +42,11 @@ pub fn build(b: *std.Build) !void {
         .target = target,
     });
 
+    const is_nix = std.posix.getenv("IN_NIX_SHELL") != null;
     const dep_sokol = b.dependency("sokol", .{
         .target = target,
         .optimize = optimize,
+        .dynamic_linkage = is_nix,
     });
 
     const dep_zalgebra = b.dependency("zalgebra", .{
@@ -135,6 +137,19 @@ pub fn build(b: *std.Build) !void {
             },
         }),
     });
+
+    // On NixOS, Zig's linker can't resolve transitive shared library deps
+    // from static archives. Building sokol as a dynamic lib avoids this.
+    // We still need to add transitive deps that Xcursor requires,
+    // and install the shared lib next to the executable.
+    if (is_nix) {
+        exe.root_module.linkSystemLibrary("Xrender", .{});
+        exe.root_module.linkSystemLibrary("Xfixes", .{});
+        exe.root_module.addRPath(.{ .cwd_relative = "$ORIGIN" });
+        b.getInstallStep().dependOn(&b.addInstallArtifact(dep_sokol.artifact("sokol_clib"), .{
+            .dest_dir = .{ .override = .prefix },
+        }).step);
+    }
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default

@@ -47,6 +47,8 @@ layout(binding=1) uniform fs_params {
 
 layout(binding=0) uniform texture2D color_map;
 layout(binding=0) uniform sampler color_smp;
+@image_sample_type shadow_map unfilterable_float
+@sampler_type shadow_smp nonfiltering
 layout(binding=1) uniform texture2D shadow_map;
 layout(binding=1) uniform sampler shadow_smp;
 
