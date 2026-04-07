@@ -12,11 +12,12 @@ layout(binding=0) uniform vs_params {
 };
 
 in vec4 position;
-in vec4 aUv;
+in vec2 aUv;
 in vec3 aNormal;
 in float ao;
 
 out vec3 normal;
+out vec2 uv;
 out vec4 frag_pos;
 out vec4 frag_pos_light_space;
 out float ao_level;
@@ -25,6 +26,7 @@ void main() {
     vec4 world_pos = model * position;
     gl_Position = proj * view * world_pos;
     normal = mat3(normal_mat) * aNormal;
+    uv = aUv;
     frag_pos = world_pos;
     frag_pos_light_space = light_space * world_pos;
     ao_level = ao;
@@ -43,10 +45,13 @@ layout(binding=1) uniform fs_params {
     float ao_strength;
 };
 
-layout(binding=0) uniform texture2D shadow_map;
-layout(binding=0) uniform sampler shadow_smp;
+layout(binding=0) uniform texture2D color_map;
+layout(binding=0) uniform sampler color_smp;
+layout(binding=1) uniform texture2D shadow_map;
+layout(binding=1) uniform sampler shadow_smp;
 
 in vec3 normal;
+in vec2 uv;
 in vec4 frag_pos;
 in vec4 frag_pos_light_space;
 in float ao_level;
@@ -102,8 +107,9 @@ void main() {
     float diff = max(dot(n, normalize(light_dir)), 0.0);
     float bias = max(0.0015 * (1.0 - diff), 0.0001);
     float shadow = sample_shadow(frag_pos_light_space, bias);
+    vec4 color = texture(sampler2D(color_map, color_smp), uv) * vec4(base_color, 1.0);
     vec3 diffuse = diff * light_color;
-    vec3 result = (ambient + diffuse * (1.0 - shadow)) * base_color * face_brightness * mix(1.0, ao_level, ao_strength);
+    vec3 result = (ambient + diffuse * (1.0 - shadow)) * color.rgb * face_brightness * mix(1.0, ao_level, ao_strength);
     frag_color = result;
 }
 @end

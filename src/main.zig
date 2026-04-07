@@ -1,6 +1,8 @@
 const std = @import("std");
 const math = @import("std").math;
 
+const zigimg = @import("zigimg");
+
 const za = @import("zalgebra");
 const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
@@ -54,6 +56,13 @@ const Shadow = struct {
     light_view_proj: Mat4 = Mat4.identity(),
 };
 
+const Texture = struct {
+    image_data: zigimg.Image = .{},
+    image: sg.Image = .{},
+    view: sg.View = .{},
+    sampler: sg.Sampler = .{},
+};
+
 const State = struct {
     rx: f32 = 0.0,
     ry: f32 = 0.0,
@@ -69,6 +78,7 @@ const State = struct {
     shapes: Shapes = undefined,
     building: BuildingState = undefined,
     shadow: Shadow = .{},
+    texture: Texture = .{},
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -78,6 +88,7 @@ const State = struct {
         self.terrain.deinit();
         self.building.deinit();
         self.shapes.deinit();
+        self.texture.image_data.deinit(gpa.allocator());
     }
 
     fn add_mesh(self: *@This(), mesh: Mesh) !void {
@@ -119,6 +130,25 @@ export fn init() void {
         .wrap_v = .CLAMP_TO_EDGE,
         .label = "shadow-sampler",
     });
+
+    var read_buffer: [zigimg.io.DEFAULT_BUFFER_SIZE]u8 = undefined;
+    state.texture.image_data = zigimg.Image.fromFilePath(gpa.allocator(), "res/p.png", read_buffer[0..]) catch return;
+
+    state.texture.sampler = sg.makeSampler(.{
+        .label = "texture-sampler",
+    });
+
+    var img_desc = sg.ImageDesc{
+        .width = @intCast(state.texture.image_data.width),
+        .height = @intCast(state.texture.image_data.height),
+        .label = "block-texture",
+    };
+    img_desc.data.mip_levels[0] = sg.asRange(state.texture.image_data.pixels.rgba32);
+    state.texture.image = sg.makeImage(img_desc);
+
+    state.texture.view = sg.makeView(.{ .texture = .{
+        .image = state.texture.image,
+    }, .label = "texture-view" });
 
     const noise = fastnoise.Noise(f32){
         .seed = 1337,
@@ -333,6 +363,8 @@ fn submit_mesh(mesh: *const Mesh) void {
     var bind: sg.Bindings = .{};
     bind.vertex_buffers[0] = mesh.vbuf;
     bind.index_buffer = if (use_wireframe) mesh.wireframe_ibuf else mesh.ibuf;
+    bind.views[shader.VIEW_color_map] = state.texture.view;
+    bind.samplers[shader.SMP_color_smp] = state.texture.sampler;
     bind.views[shader.VIEW_shadow_map] = state.shadow.tex_view;
     bind.samplers[shader.SMP_shadow_smp] = state.shadow.sampler;
     const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);

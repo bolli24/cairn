@@ -478,12 +478,14 @@ pub const Chunk = struct {
 
                         const base: u16 = @intCast(self.mesh.vertices.items.len);
                         const normal = za.Vec3.new(face.normal[0], face.normal[1], face.normal[2]);
+                        const face_uvs = [4][2]f32{ .{ 1, 0 }, .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 } };
                         var ao_vals: [4]f32 = undefined;
                         for (face.verts, 0..) |v, vert_i| {
                             ao_vals[vert_i] = vertex_ao(vert_i, x, y, z, face, blocks, terrain, overlay, chunk_origin);
                             self.mesh.vertices.append(allocator, .{
                                 .pos = za.Vec3.new(v[0] + fx, v[1] + fy, v[2] + fz),
                                 .normal = normal,
+                                .uv = za.Vec2.new(face_uvs[vert_i][0], face_uvs[vert_i][1]),
                                 .ao = ao_vals[vert_i],
                             }) catch return;
                         }
