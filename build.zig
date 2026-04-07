@@ -1,5 +1,6 @@
 const std = @import("std");
 const sokol = @import("sokol");
+const cimgui = @import("cimgui");
 
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
@@ -42,12 +43,24 @@ pub fn build(b: *std.Build) !void {
         .target = target,
     });
 
+    const opt_docking = b.option(bool, "docking", "Build with docking support") orelse false;
+
+    const cimgui_conf = cimgui.getConfig(opt_docking);
+
     const is_nix = std.posix.getenv("IN_NIX_SHELL") != null;
     const dep_sokol = b.dependency("sokol", .{
         .target = target,
         .optimize = optimize,
+        .with_sokol_imgui = true,
+        .with_tracing = true,
         .dynamic_linkage = is_nix,
     });
+    const dep_cimgui = b.dependency("cimgui", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    // inject the cimgui header search path into the sokol C library compile step
+    dep_sokol.artifact("sokol_clib").root_module.addIncludePath(dep_cimgui.path(cimgui_conf.include_dir));
 
     const dep_zalgebra = b.dependency("zalgebra", .{
         .target = target,
@@ -111,6 +124,11 @@ pub fn build(b: *std.Build) !void {
                     .module = dep_sokol.module("sokol"),
                 },
                 .{
+                    .name = cimgui_conf.module_name,
+                    .module = dep_cimgui.module(cimgui_conf.module_name),
+                },
+
+                .{
                     .name = "zalgebra",
                     .module = dep_zalgebra.module("zalgebra"),
                 },
@@ -137,6 +155,10 @@ pub fn build(b: *std.Build) !void {
             },
         }),
     });
+
+    const mod_options = b.addOptions();
+    mod_options.addOption(bool, "docking", opt_docking);
+    exe.root_module.addOptions("build_options", mod_options);
 
     // On NixOS, Zig's linker can't resolve transitive shared library deps
     // from static archives. Building sokol as a dynamic lib avoids this.

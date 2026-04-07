@@ -15,11 +15,16 @@ const sokol = @import("sokol");
 const sg = sokol.gfx;
 const sapp = sokol.app;
 const sglue = sokol.glue;
+const simgui = sokol.imgui;
+const sgimgui = sokol.sgimgui;
 const saudio = sokol.audio;
 const slog = sokol.log;
 const shader = @import("shader");
 const line_shader = @import("line_shader");
 const shadow_shader = @import("shadow_shader");
+
+const use_docking = @import("build_options").docking;
+const ig = if (use_docking) @import("cimgui_docking") else @import("cimgui");
 
 const obj = @import("obj.zig");
 const terrain_mod = @import("terrain.zig");
@@ -104,6 +109,14 @@ export fn init() void {
         .logger = .{ .func = slog.func },
         .buffer_pool_size = 2048,
     });
+
+    sgimgui.setup(.{});
+    simgui.setup(.{
+        .logger = .{ .func = slog.func },
+    });
+    if (use_docking) {
+        ig.igGetIO().*.ConfigFlags |= ig.ImGuiConfigFlags_DockingEnable;
+    }
 
     std.debug.print("Backend: {s}\n", .{@tagName(sg.queryBackend())});
 
@@ -262,8 +275,21 @@ export fn init() void {
 
 export fn frame() void {
     var frame_timer = std.time.Timer.start() catch unreachable;
-
     const t = @as(f32, @floatCast(sapp.frameDuration()));
+
+    // call simgui.newFrame() before any ImGui calls
+    simgui.newFrame(.{
+        .width = sapp.width(),
+        .height = sapp.height(),
+        .delta_time = sapp.frameDuration(),
+        .dpi_scale = sapp.dpiScale(),
+    });
+
+    if (ig.igBeginMainMenuBar()) {
+        sgimgui.drawMenu("sokol-gfx");
+        ig.igEndMainMenuBar();
+    }
+    sgimgui.draw();
 
     state.camera.update(t, &state.input);
 
@@ -348,6 +374,18 @@ export fn frame() void {
     state.shapes.draw_all();
 
     sg.endPass();
+
+    var pass_action = sg.PassAction{};
+    pass_action.colors[0] = .{
+        .load_action = .LOAD,
+    };
+
+    sg.beginPass(.{
+        .action = pass_action,
+        .swapchain = sglue.swapchain(),
+    });
+    simgui.render();
+    sg.endPass();
     sg.commit();
 
     state.input.update();
@@ -384,7 +422,7 @@ fn submit_mesh(mesh: *const Mesh) void {
 }
 
 export fn event_handler(maybe_event: [*c]const sapp.Event) void {
-    const event = maybe_event[0];
+    const event = maybe_event.*;
     // const t = sapp.frameDuration();
     switch (event.type) {
         .KEY_DOWN => if (!event.key_repeat) state.input.setKey(event.key_code, .pressed),
@@ -400,6 +438,8 @@ export fn event_handler(maybe_event: [*c]const sapp.Event) void {
         },
         else => {},
     }
+
+    _ = simgui.handleEvent(maybe_event.*);
 }
 
 export fn cleanup() void {
