@@ -47,7 +47,9 @@ pub fn build(b: *std.Build) !void {
 
     const cimgui_conf = cimgui.getConfig(opt_docking);
 
-    const is_nix = std.posix.getenv("IN_NIX_SHELL") != null;
+    const nix_shell_val = std.process.getEnvVarOwned(b.allocator, "IN_NIX_SHELL") catch null;
+    defer if (nix_shell_val) |v| b.allocator.free(v);
+    const is_nix = nix_shell_val != null;
     const dep_sokol = b.dependency("sokol", .{
         .target = target,
         .optimize = optimize,
