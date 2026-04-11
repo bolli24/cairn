@@ -49,7 +49,8 @@ const SHADOW_MAP_SIZE: i32 = 4096;
 const Light = struct {
     color: Vec3 = .new(1, 1, 1),
     dir: Vec3 = Vec3.new(0.7, 0.6, 0.4).norm(),
-    ambient: Vec3 = .new(0.2, 0.2, 0.2),
+    ambient: Vec3 = .new(0.4, 0.4, 0.4),
+    brightness: f32 = 1.5,
 };
 
 const Shadow = struct {
@@ -423,6 +424,7 @@ fn submit_mesh(mesh: *const Mesh) void {
         .light_color = state.light.color.toArray(),
         .light_dir = state.light.dir.toArray(),
         .ao_strength = 0.6,
+        .brightness = state.light.brightness,
     };
 
     sg.applyBindings(bind);

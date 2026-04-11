@@ -43,6 +43,7 @@ layout(binding=1) uniform fs_params {
     vec3 light_color;
     vec3 light_dir;
     float ao_strength;
+    float brightness;
 };
 
 layout(binding=0) uniform texture2D color_map;
@@ -110,7 +111,7 @@ void main() {
     float bias = max(0.0015 * (1.0 - diff), 0.0001);
     float shadow = sample_shadow(frag_pos_light_space, bias);
     vec4 color = texture(sampler2D(color_map, color_smp), uv) * vec4(base_color, 1.0);
-    vec3 diffuse = diff * light_color;
+    vec3 diffuse = diff * light_color * brightness;
     vec3 result = (ambient + diffuse * (1.0 - shadow)) * color.rgb * face_brightness * mix(1.0, ao_level, ao_strength);
     frag_color = result;
 }

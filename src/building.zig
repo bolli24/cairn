@@ -11,9 +11,9 @@ const sapp = sokol.app;
 
 const InputState = @import("input.zig").InputState;
 const Camera = @import("camera.zig").Camera;
-const terrai_mod = @import("terrain.zig");
-const Terrain = terrai_mod.Terrain;
-const Block = terrai_mod.Block;
+const terrain_mod = @import("terrain.zig");
+const Terrain = terrain_mod.Terrain;
+const Block = terrain_mod.Block;
 const Shapes = @import("shapes.zig").Shapes;
 
 const MARKER_COLOR = Vec4.new(1, 1, 0, 1);
@@ -88,7 +88,9 @@ pub const BuildingState = struct {
                     }
                     self.preview.clear();
                     self.prev_hit = h.pos;
-                    self.preview.add_block_path(terrain, self.pos1.?, h.pos, 4, .air, .circle);
+                    const p1 = self.pos1.?.add(Vec3_i32.new(0, 3, 0));
+                    const p2 = h.pos.add(Vec3_i32.new(0, 3, 0));
+                    self.preview.add_block_path(terrain, p1, p2, 3.9, .air, .circle);
                     self.preview.show(terrain);
                     self.preview_active = true;
                 }
@@ -133,12 +135,12 @@ pub const BuildingState = struct {
 pub const Shape = enum { circle, square };
 
 pub const EditPreview = struct {
-    const CS = terrai_mod.CHUNK_SIZE;
-    chunks: terrai_mod.ChunkOverlay,
+    const CS = terrain_mod.CHUNK_SIZE;
+    chunks: terrain_mod.ChunkOverlay,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) @This() {
-        return .{ .chunks = terrai_mod.ChunkOverlay.init(allocator), .allocator = allocator };
+        return .{ .chunks = terrain_mod.ChunkOverlay.init(allocator), .allocator = allocator };
     }
 
     pub fn deinit(self: *@This()) void {
@@ -160,7 +162,7 @@ pub const EditPreview = struct {
                 _ = self.chunks.remove(chunk_pos);
                 return;
             };
-            const overlay_blocks = self.allocator.create(terrai_mod.ChunkBlocks) catch return;
+            const overlay_blocks = self.allocator.create(terrain_mod.ChunkBlocks) catch return;
             overlay_blocks.* = chunk._blocks;
             gop.value_ptr.* = overlay_blocks;
         }
@@ -175,17 +177,18 @@ pub const EditPreview = struct {
         terrain: *Terrain,
         p1: Vec3_i32,
         p2: Vec3_i32,
-        radius: i32,
+        radius: f32,
         block: Block,
         shape: Shape,
     ) void {
         // Bounding box expanded by radius in all axes
-        const min_x = @min(p1.x(), p2.x()) - radius;
-        const max_x = @max(p1.x(), p2.x()) + radius;
-        const min_y = @min(p1.y(), p2.y()) - radius;
-        const max_y = @max(p1.y(), p2.y()) + radius;
-        const min_z = @min(p1.z(), p2.z()) - radius;
-        const max_z = @max(p1.z(), p2.z()) + radius;
+        const radius_i = @as(i32, @intFromFloat(@ceil(radius)));
+        const min_x = @min(p1.x(), p2.x()) - radius_i;
+        const max_x = @max(p1.x(), p2.x()) + radius_i;
+        const min_y = @min(p1.y(), p2.y()) - radius_i;
+        const max_y = @max(p1.y(), p2.y()) + radius_i;
+        const min_z = @min(p1.z(), p2.z()) - radius_i;
+        const max_z = @max(p1.z(), p2.z()) + radius_i;
 
         // Full 3D segment direction
         const dx_seg: f32 = @floatFromInt(p2.x() - p1.x());
@@ -193,8 +196,7 @@ pub const EditPreview = struct {
         const dz_seg: f32 = @floatFromInt(p2.z() - p1.z());
         const len_sq = dx_seg * dx_seg + dy_seg * dy_seg + dz_seg * dz_seg;
 
-        const r_sq: f32 = @floatFromInt(radius * radius);
-        const r_f: f32 = @floatFromInt(radius);
+        const r_sq: f32 = radius * radius;
 
         var ix = min_x;
         while (ix <= max_x) : (ix += 1) {
@@ -218,7 +220,7 @@ pub const EditPreview = struct {
 
                     const in_shape = switch (shape) {
                         .circle => diff_x * diff_x + diff_y * diff_y + diff_z * diff_z <= r_sq,
-                        .square => @abs(diff_x) <= r_f and @abs(diff_y) <= r_f and @abs(diff_z) <= r_f,
+                        .square => @abs(diff_x) <= radius and @abs(diff_y) <= radius and @abs(diff_z) <= radius,
                     };
 
                     if (in_shape) {
