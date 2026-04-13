@@ -384,6 +384,17 @@ export fn frame() void {
         .action = pass_action,
         .swapchain = sglue.swapchain(),
     });
+
+    ig.igSetNextWindowPos(.{ .x = 10, .y = 20 }, ig.ImGuiCond_Once);
+    _ = ig.igBegin(
+        "debug_text",
+        null,
+        ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs,
+    );
+    ig.igText("%4.1f fps \t %4.1f ms", 1 / t, t * 1000);
+
+    ig.igEnd();
+
     simgui.render();
     sg.endPass();
     sg.commit();
