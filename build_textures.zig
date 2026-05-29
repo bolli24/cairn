@@ -1,25 +1,27 @@
 const std = @import("std");
 const TextureKind = @import("src/texture.zig").TextureKind;
 
+const TextureRequests = std.StringArrayHashMapUnmanaged(TextureRequest);
+
 pub const TextureRequest = struct {
     path: []const u8,
     kind: TextureKind,
 };
 
-pub fn collectAll(src_dir: []const u8, allocator: std.mem.Allocator) !std.StringArrayHashMap(TextureRequest) {
-    var dir = try std.fs.cwd().openDir(src_dir, .{ .iterate = true });
-    defer dir.close();
+pub fn collectAll(src_dir: []const u8, io: std.Io, allocator: std.mem.Allocator) !TextureRequests {
+    var dir = try std.Io.Dir.cwd().openDir(io, src_dir, .{ .iterate = true });
+    defer dir.close(io);
 
     var walker = try dir.walk(allocator);
     defer walker.deinit();
 
-    var unique_requests = std.StringArrayHashMap(TextureRequest).init(allocator);
-    errdefer unique_requests.deinit();
+    var unique_requests: TextureRequests = .empty;
+    errdefer unique_requests.deinit(allocator);
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".zig")) {
             const full_path = try std.fs.path.join(allocator, &.{ src_dir, entry.path });
-            try collectTextures(full_path, &unique_requests, allocator);
+            try collectTextures(full_path, &unique_requests, io, allocator);
         }
     }
 
@@ -32,7 +34,7 @@ pub fn addTextureBuildSteps(
     src_dir: []const u8,
     res_dir: []const u8,
 ) !void {
-    const requests = try collectAll(src_dir, b.allocator);
+    const requests = try collectAll(src_dir, b.graph.io, b.allocator);
 
     for (requests.keys(), requests.values()) |path, request| {
         const compressor_cmd = b.addRunArtifact(compressor);
@@ -66,15 +68,16 @@ fn getCompressionArgs(kind: TextureKind) []const []const u8 {
     };
 }
 
-pub fn collectTextures(src_path: []const u8, requests: *std.StringArrayHashMap(TextureRequest), allocator: std.mem.Allocator) !void {
-    const source = try std.fs.cwd().readFileAllocOptions(
-        allocator,
+pub fn collectTextures(src_path: []const u8, requests: *TextureRequests, io: std.Io, allocator: std.mem.Allocator) !void {
+    const source = try std.Io.Dir.cwd().readFileAllocOptions(
+        io,
         src_path,
-        1024 * 1024,
-        null,
+        allocator,
+        std.Io.Limit.limited(1024 * 1024),
         .of(u8),
         0,
     );
+    defer allocator.free(source);
     var tree = try std.zig.Ast.parse(allocator, source, .zig);
     defer tree.deinit(allocator);
 
@@ -105,7 +108,7 @@ pub fn collectTextures(src_path: []const u8, requests: *std.StringArrayHashMap(T
 
                     // Convert the string to the actual enum value
                     if (std.meta.stringToEnum(TextureKind, enum_str)) |parsed_kind| {
-                        const gop = try requests.getOrPut(path_str);
+                        const gop = try requests.getOrPut(allocator, path_str);
                         if (!gop.found_existing) {
                             gop.key_ptr.* = try allocator.dupe(u8, path_str);
                             gop.value_ptr.* = .{

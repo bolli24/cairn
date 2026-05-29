@@ -49,9 +49,7 @@ pub fn build(b: *std.Build) !void {
 
     const cimgui_conf = cimgui.getConfig(opt_docking);
 
-    const nix_shell_val = std.process.getEnvVarOwned(b.allocator, "IN_NIX_SHELL") catch null;
-    defer if (nix_shell_val) |v| b.allocator.free(v);
-    const is_nix = nix_shell_val != null;
+    const is_nix = b.graph.environ_map.get("IN_NIX_SHELL") != null;
     const dep_sokol = b.dependency("sokol", .{
         .target = target,
         .optimize = optimize,
@@ -95,10 +93,10 @@ pub fn build(b: *std.Build) !void {
             .link_libcpp = true,
         }),
     });
-    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("bc7enc.c") });
-    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("bc7decomp.cpp"), .flags = &.{"-std=c++17"} });
-    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("test.cpp"), .flags = &.{"-std=c++17"} });
-    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("lodepng.cpp"), .flags = &.{"-std=c++17"} });
+    bc7enc.root_module.addCSourceFile(.{ .file = dep_bc7enc.path("bc7enc.c") });
+    bc7enc.root_module.addCSourceFile(.{ .file = dep_bc7enc.path("bc7decomp.cpp"), .flags = &.{"-std=c++17"} });
+    bc7enc.root_module.addCSourceFile(.{ .file = dep_bc7enc.path("test.cpp"), .flags = &.{"-std=c++17"} });
+    bc7enc.root_module.addCSourceFile(.{ .file = dep_bc7enc.path("lodepng.cpp"), .flags = &.{"-std=c++17"} });
     b.getInstallStep().dependOn(&b.addInstallArtifact(bc7enc, .{
         .dest_dir = .{ .override = .prefix },
     }).step);

@@ -14,7 +14,7 @@ const sg = sokol.gfx;
 const sapp = sokol.app;
 const sglue = sokol.glue;
 const simgui = sokol.imgui;
-const sgimgui = sokol.sgimgui;
+const sgimgui = sokol.gfximgui;
 const saudio = sokol.audio;
 const slog = sokol.log;
 const shader = @import("shader");
@@ -64,7 +64,6 @@ const Shadow = struct {
 };
 
 const block_texture_source = TextureSource("p.png", .albedo);
-const _ = TextureSource("test.png", .albedo);
 
 const State = struct {
     rx: f32 = 0.0,
@@ -101,14 +100,37 @@ const State = struct {
 
 var state: State = .{};
 
-fn logStartupSection(name: []const u8, timer: *std.time.Timer) void {
+const Timer = struct {
+    start_time: std.Io.Clock.Timestamp,
+    lap_time: std.Io.Clock.Timestamp,
+
+    fn start() !Timer {
+        const now = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+        return .{
+            .start_time = now,
+            .lap_time = now,
+        };
+    }
+
+    fn read(self: Timer) u64 {
+        return @intCast(self.start_time.durationTo(std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake)).raw.toNanoseconds());
+    }
+
+    fn lap(self: *Timer) u64 {
+        const now = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+        defer self.lap_time = now;
+        return @intCast(self.lap_time.durationTo(now).raw.toNanoseconds());
+    }
+};
+
+fn logStartupSection(name: []const u8, timer: *Timer) void {
     const ms = @as(f64, @floatFromInt(timer.lap())) / @as(f64, @floatFromInt(std.time.ns_per_ms));
     std.debug.print("startup {s}: {d:.2} ms\n", .{ name, ms });
 }
 
 export fn init() void {
-    var startup_timer = std.time.Timer.start() catch unreachable;
-    var section_timer = std.time.Timer.start() catch unreachable;
+    var startup_timer = Timer.start() catch unreachable;
+    var section_timer = Timer.start() catch unreachable;
 
     sg.setup(.{
         .environment = sglue.environment(),
@@ -282,7 +304,7 @@ export fn init() void {
 }
 
 export fn frame() void {
-    var frame_timer = std.time.Timer.start() catch unreachable;
+    var frame_timer = Timer.start() catch unreachable;
     const t = @as(f32, @floatCast(sapp.frameDuration()));
 
     // call simgui.newFrame() before any ImGui calls

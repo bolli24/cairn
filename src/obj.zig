@@ -6,14 +6,14 @@ const lib = @import("mesh.zig");
 const BUF_LEN = 1024;
 
 pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !lib.Mesh {
-    const file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, file_path, .{});
+    defer file.close(std.Options.debug_io);
 
     var read_buf: [BUF_LEN]u8 = undefined;
     var line_buf: [BUF_LEN]u8 = undefined;
 
-    var reader = file.reader(&read_buf);
-    var writer = std.io.Writer.fixed(&line_buf);
+    var reader = file.reader(std.Options.debug_io, &read_buf);
+    var writer = std.Io.Writer.fixed(&line_buf);
 
     var raw_positions: std.ArrayList(Vec3) = .empty;
     defer raw_positions.deinit(allocator);

@@ -37,7 +37,7 @@ fn pixelFormatForTextureKind(kind: TextureKind) sg.PixelFormat {
 }
 
 pub fn loadDdsTexture(allocator: std.mem.Allocator, path: []const u8, kind: TextureKind) !GpuTexture {
-    const data = try std.fs.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024);
+    const data = try std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, path, allocator, std.Io.Limit.limited(64 * 1024 * 1024));
     errdefer allocator.free(data);
 
     if (data.len < 148 or !std.mem.eql(u8, data[0..4], "DDS ")) return error.InvalidDdsMagic;
