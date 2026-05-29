@@ -2,6 +2,8 @@ const std = @import("std");
 const sokol = @import("sokol");
 const cimgui = @import("cimgui");
 
+const tex = @import("build_textures.zig");
+
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
 // executed by an external runner. The functions in `std.Build` implement a DSL
@@ -79,6 +81,28 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    const dep_bc7enc = b.dependency("bc7enc", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const bc7enc = b.addExecutable(.{
+        .name = "bc7enc",
+        .root_module = b.createModule(.{
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .link_libc = false,
+            .link_libcpp = true,
+        }),
+    });
+    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("bc7enc.c") });
+    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("bc7decomp.cpp"), .flags = &.{"-std=c++17"} });
+    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("test.cpp"), .flags = &.{"-std=c++17"} });
+    bc7enc.addCSourceFile(.{ .file = dep_bc7enc.path("lodepng.cpp"), .flags = &.{"-std=c++17"} });
+    b.getInstallStep().dependOn(&b.addInstallArtifact(bc7enc, .{
+        .dest_dir = .{ .override = .prefix },
+    }).step);
+
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business
@@ -104,6 +128,8 @@ pub fn build(b: *std.Build) !void {
 
     var shadow_shader_module = try createShaderModule(b, dep_sokol, "src/shadow.glsl");
     shadow_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
+
+    try tex.addTextureBuildSteps(b, bc7enc, "src", "res");
 
     const exe = b.addExecutable(.{
         .name = "voxel_zig",

@@ -52,10 +52,15 @@
             .url = "git+https://github.com/floooh/dcimgui.git#50ee9823f90491c4fd5ab01560503207cffbb530",
             .hash = "cimgui-0.1.0-44ClkVf0mABIf6WIuAgRMbRMcA2sciKURfIDz84qri90",
         },
+        .bc7enc = .{
+            .url = "git+https://github.com/richgel999/bc7enc.git#f66c2e489b07138f2673a2fb3d27c1aa1d565c48",
+            .hash = "N-V-__8AAMOREQCkLDWM4F0ivcrN3FPw8CpB_XfN-tSoRWMx",
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "build_textures.zig",
         "src",
         // For example...
         //"LICENSE",

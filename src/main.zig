@@ -1,8 +1,6 @@
 const std = @import("std");
 const math = @import("std").math;
 
-const zigimg = @import("zigimg");
-
 const za = @import("zalgebra");
 const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
@@ -39,6 +37,9 @@ const Shapes = @import("shapes.zig").Shapes;
 const input = @import("input.zig");
 const InputState = input.InputState;
 const BuildingState = @import("building.zig").BuildingState;
+const texture_mod = @import("texture.zig");
+const GpuTexture = texture_mod.GpuTexture;
+const TextureSource = texture_mod.TextureSource;
 
 const fastnoise = @import("fastnoise");
 
@@ -62,12 +63,8 @@ const Shadow = struct {
     light_view_proj: Mat4 = Mat4.identity(),
 };
 
-const Texture = struct {
-    image_data: zigimg.Image = .{},
-    image: sg.Image = .{},
-    view: sg.View = .{},
-    sampler: sg.Sampler = .{},
-};
+const block_texture_source = TextureSource("p.png", .albedo);
+const _ = TextureSource("test.png", .albedo);
 
 const State = struct {
     rx: f32 = 0.0,
@@ -84,7 +81,7 @@ const State = struct {
     shapes: Shapes = undefined,
     building: BuildingState = undefined,
     shadow: Shadow = .{},
-    texture: Texture = .{},
+    texture: GpuTexture = .{},
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -94,7 +91,7 @@ const State = struct {
         self.terrain.deinit();
         self.building.deinit();
         self.shapes.deinit();
-        self.texture.image_data.deinit(gpa.allocator());
+        gpa.allocator().free(self.texture.data);
     }
 
     fn add_mesh(self: *@This(), mesh: Mesh) !void {
@@ -104,12 +101,21 @@ const State = struct {
 
 var state: State = .{};
 
+fn logStartupSection(name: []const u8, timer: *std.time.Timer) void {
+    const ms = @as(f64, @floatFromInt(timer.lap())) / @as(f64, @floatFromInt(std.time.ns_per_ms));
+    std.debug.print("startup {s}: {d:.2} ms\n", .{ name, ms });
+}
+
 export fn init() void {
+    var startup_timer = std.time.Timer.start() catch unreachable;
+    var section_timer = std.time.Timer.start() catch unreachable;
+
     sg.setup(.{
         .environment = sglue.environment(),
         .logger = .{ .func = slog.func },
         .buffer_pool_size = 2048,
     });
+    logStartupSection("sokol setup", &section_timer);
 
     sgimgui.setup(.{});
     simgui.setup(.{
@@ -118,6 +124,7 @@ export fn init() void {
     if (use_docking) {
         ig.igGetIO().*.ConfigFlags |= ig.ImGuiConfigFlags_DockingEnable;
     }
+    logStartupSection("imgui setup", &section_timer);
 
     std.debug.print("Backend: {s}\n", .{@tagName(sg.queryBackend())});
 
@@ -144,25 +151,13 @@ export fn init() void {
         .wrap_v = .CLAMP_TO_EDGE,
         .label = "shadow-sampler",
     });
+    logStartupSection("shadow resources", &section_timer);
 
-    var read_buffer: [zigimg.io.DEFAULT_BUFFER_SIZE]u8 = undefined;
-    state.texture.image_data = zigimg.Image.fromFilePath(gpa.allocator(), "res/p.png", read_buffer[0..]) catch return;
-
-    state.texture.sampler = sg.makeSampler(.{
-        .label = "texture-sampler",
-    });
-
-    var img_desc = sg.ImageDesc{
-        .width = @intCast(state.texture.image_data.width),
-        .height = @intCast(state.texture.image_data.height),
-        .label = "block-texture",
+    state.texture = texture_mod.loadDdsTexture(gpa.allocator(), block_texture_source, .albedo) catch |err| {
+        std.debug.print("texture load failed: {s}\n", .{@errorName(err)});
+        return;
     };
-    img_desc.data.mip_levels[0] = sg.asRange(state.texture.image_data.pixels.rgba32);
-    state.texture.image = sg.makeImage(img_desc);
-
-    state.texture.view = sg.makeView(.{ .texture = .{
-        .image = state.texture.image,
-    }, .label = "texture-view" });
+    logStartupSection("texture load", &section_timer);
 
     const noise = fastnoise.Noise(f32){
         .seed = 1337,
@@ -178,16 +173,22 @@ export fn init() void {
 
     const terrain_size = za.Vec3_usize.new(12, 3, 12);
     state.terrain = terrain_mod.Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
+    logStartupSection("terrain generation", &section_timer);
+
     state.building = BuildingState.init(gpa.allocator());
     state.camera.target_pos = Vec2.new(
         @floatFromInt(terrain_size.x() * terrain_mod.CHUNK_SIZE / 2),
         @floatFromInt(terrain_size.z() * terrain_mod.CHUNK_SIZE / 2),
     );
+    logStartupSection("building camera init", &section_timer);
 
     var suzanne = obj.load_mesh_from_obj(gpa.allocator(), "res/suzanne.obj") catch return;
+    logStartupSection("obj load", &section_timer);
+
     suzanne.transform.position = Vec3.new(0, 10, 0);
     suzanne.upload();
     state.add_mesh(suzanne) catch return;
+    logStartupSection("obj upload", &section_timer);
 
     // Shadow pipeline
     const shadow_shd = sg.makeShader(shadow_shader.shadowShaderDesc(sg.queryBackend()));
@@ -237,6 +238,7 @@ export fn init() void {
     pip_desc.label = "wireframe-pipeline";
 
     state.pip_wireframe = sg.makePipeline(pip_desc);
+    logStartupSection("mesh pipelines", &section_timer);
 
     const line_shd = sg.makeShader(line_shader.basicShaderDesc(sg.queryBackend()));
     var line_pip_desc = sg.PipelineDesc{
@@ -270,8 +272,13 @@ export fn init() void {
         .pipeline = sg.makePipeline(line_pip_desc),
         .allocator = gpa.allocator(),
     };
+    logStartupSection("shape pipeline", &section_timer);
 
     state.shadow.light_view_proj = compute_light_view_proj();
+    logStartupSection("light view proj", &section_timer);
+
+    const total_ms = @as(f64, @floatFromInt(startup_timer.read())) / @as(f64, @floatFromInt(std.time.ns_per_ms));
+    std.debug.print("startup total: {d:.2} ms\n", .{total_ms});
 }
 
 export fn frame() void {
