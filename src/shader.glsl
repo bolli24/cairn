@@ -44,6 +44,7 @@ layout(binding=1) uniform fs_params {
     vec3 light_dir;
     float ao_strength;
     float brightness;
+    float shadow_strength;
 };
 
 layout(binding=0) uniform texture2D color_map;
@@ -96,20 +97,16 @@ float sample_shadow(vec4 light_space_pos, float bias) {
 
 void main() {
     vec3 n = normalize(normal);
-    float face_brightness;
-    // NOTE: assumes axis-aligned normals; replace with smooth formula when adding non-voxel geometry
-    if (n.y > 0.5) {
-        face_brightness = 1.0;  // +Y
-    } else if (n.y < -0.5) {
-        face_brightness = 0.5;  // -Y
-    } else if (abs(n.x) > 0.5) {
-        face_brightness = 0.8;  // ±X
-    } else {
-        face_brightness = 0.6;  // ±Z
-    }
+    vec3 geom_n = normalize(cross(dFdx(frag_pos.xyz), dFdy(frag_pos.xyz)));
+    if (dot(geom_n, n) < 0.0) geom_n = -geom_n;
+
+    vec3 axis_weight = abs(geom_n);
+    float y_brightness = geom_n.y > 0.0 ? 1.0 : 0.5;
+    float face_brightness = axis_weight.x * 0.8 + axis_weight.y * y_brightness + axis_weight.z * 0.6;
     float diff = max(dot(n, normalize(light_dir)), 0.0);
-    float bias = max(0.0015 * (1.0 - diff), 0.0001);
-    float shadow = sample_shadow(frag_pos_light_space, bias);
+    float geom_diff = max(dot(geom_n, normalize(light_dir)), 0.0);
+    float bias = max(0.0015 * (1.0 - geom_diff), 0.0001);
+    float shadow = sample_shadow(frag_pos_light_space, bias) * shadow_strength;
     vec4 color = texture(sampler2D(color_map, color_smp), uv) * vec4(base_color, 1.0);
     vec3 diffuse = diff * light_color * brightness;
     vec3 result = (ambient + diffuse * (1.0 - shadow)) * color.rgb * face_brightness * mix(1.0, ao_level, ao_strength);

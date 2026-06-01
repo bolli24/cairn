@@ -305,7 +305,7 @@ pub const Chunk = struct {
         return self._blocks[x][y][z];
     }
 
-    // Each face: 4 vertices (CCW winding from outside), 1 normal
+    // Each face: 4 vertices (CCW winding from outside), 1 fallback normal
     // vert_neighbors: for each vertex, [side1, side2, corner] block offsets for AO sampling.
     // All offsets include the face normal so they sample at the correct face plane.
     const Face = struct {
@@ -441,6 +441,61 @@ pub const Chunk = struct {
         return (3.0 - occlusion) / 3.0;
     }
 
+    fn surface_normal_estimate(
+        x: usize,
+        y: usize,
+        z: usize,
+        blocks: *const ChunkBlocks,
+        terrain: ?*const Terrain,
+        overlay: ?*const ChunkOverlay,
+        chunk_origin: Vec3_i32,
+    ) Vec3 {
+        const bx: i32 = @intCast(x);
+        const by: i32 = @intCast(y);
+        const bz: i32 = @intCast(z);
+
+        var solid_x: f32 = 0.0;
+        var solid_y: f32 = 0.0;
+        var solid_z: f32 = 0.0;
+
+        var dx: i32 = -1;
+        while (dx <= 1) : (dx += 1) {
+            var dy: i32 = -1;
+            while (dy <= 1) : (dy += 1) {
+                var dz: i32 = -1;
+                while (dz <= 1) : (dz += 1) {
+                    if (dx == 0 and dy == 0 and dz == 0) continue;
+                    if (!is_solid(blocks, terrain, overlay, chunk_origin, bx + dx, by + dy, bz + dz)) continue;
+
+                    solid_x += @floatFromInt(dx);
+                    solid_y += @floatFromInt(dy);
+                    solid_z += @floatFromInt(dz);
+                }
+            }
+        }
+
+        return Vec3.new(-solid_x, -solid_y, -solid_z);
+    }
+
+    fn face_surface_normal(estimate: Vec3, face_normal: [3]f32) Vec3 {
+        const fallback = Vec3.new(face_normal[0], face_normal[1], face_normal[2]);
+        var nx = estimate.x();
+        var ny = estimate.y();
+        var nz = estimate.z();
+        const len_sq = nx * nx + ny * ny + nz * nz;
+        if (len_sq <= 0.000001) return fallback;
+
+        const inv_len = 1.0 / @sqrt(len_sq);
+        nx *= inv_len;
+        ny *= inv_len;
+        nz *= inv_len;
+
+        const facing = nx * face_normal[0] + ny * face_normal[1] + nz * face_normal[2];
+        if (facing <= 0.0) return fallback;
+
+        return Vec3.new(nx, ny, nz);
+    }
+
     pub fn update_mesh_with_overlay(self: *Self, allocator: std.mem.Allocator, terrain: ?*const Terrain, overlay: ?*const ChunkOverlay) void {
         self.mesh.vertices.clearRetainingCapacity();
         self.mesh.indices.clearRetainingCapacity();
@@ -461,6 +516,7 @@ pub const Chunk = struct {
                     const fx: f32 = @floatFromInt(x);
                     const fy: f32 = @floatFromInt(y);
                     const fz: f32 = @floatFromInt(z);
+                    var normal_estimate: ?Vec3 = null;
 
                     for (faces, 0..) |face, i| {
                         const dir = face_dirs[i];
@@ -468,16 +524,15 @@ pub const Chunk = struct {
                         const ny: i32 = @as(i32, @intCast(y)) + dir[1];
                         const nz: i32 = @as(i32, @intCast(z)) + dir[2];
 
-                        // Skip face if neighbor is within bounds and solid
-                        if (nx >= 0 and nx < CHUNK_SIZE and
-                            ny >= 0 and ny < CHUNK_SIZE and
-                            nz >= 0 and nz < CHUNK_SIZE)
-                        {
-                            if (blocks[@intCast(nx)][@intCast(ny)][@intCast(nz)] != .air) continue;
-                        }
+                        if (is_solid(blocks, terrain, overlay, chunk_origin, nx, ny, nz)) continue;
 
                         const base: u16 = @intCast(self.mesh.vertices.items.len);
-                        const normal = za.Vec3.new(face.normal[0], face.normal[1], face.normal[2]);
+                        const estimate = normal_estimate orelse estimate: {
+                            const computed = surface_normal_estimate(x, y, z, blocks, terrain, overlay, chunk_origin);
+                            normal_estimate = computed;
+                            break :estimate computed;
+                        };
+                        const normal = face_surface_normal(estimate, face.normal);
                         const face_uvs = [4][2]f32{ .{ 1, 0 }, .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 } };
                         var ao_vals: [4]f32 = undefined;
                         for (face.verts, 0..) |v, vert_i| {

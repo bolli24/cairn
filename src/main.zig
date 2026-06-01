@@ -50,7 +50,7 @@ const SHADOW_MAP_SIZE: i32 = 4096;
 const Light = struct {
     color: Vec3 = .new(1, 1, 1),
     dir: Vec3 = Vec3.new(0.7, 0.6, 0.4).norm(),
-    ambient: Vec3 = .new(0.4, 0.4, 0.4),
+    ambient: Vec3 = .new(0.6, 0.6, 0.6),
     brightness: f32 = 1.5,
 };
 
@@ -77,6 +77,8 @@ const State = struct {
     input: InputState = .{},
     light: Light = .{},
     show_light_rays: bool = false,
+    shadows_enabled: bool = true,
+    ambient_occlusion_enabled: bool = true,
     shapes: Shapes = undefined,
     building: BuildingState = undefined,
     shadow: Shadow = .{},
@@ -327,6 +329,14 @@ export fn frame() void {
         state.wireframe = !state.wireframe;
     }
 
+    if (state.input.key_pressed(.F2)) {
+        state.shadows_enabled = !state.shadows_enabled;
+    }
+
+    if (state.input.key_pressed(.F3)) {
+        state.ambient_occlusion_enabled = !state.ambient_occlusion_enabled;
+    }
+
     if (state.input.key_pressed(.L)) {
         state.show_light_rays = !state.show_light_rays;
     }
@@ -452,8 +462,9 @@ fn submit_mesh(mesh: *const Mesh) void {
         .ambient = state.light.ambient.toArray(),
         .light_color = state.light.color.toArray(),
         .light_dir = state.light.dir.toArray(),
-        .ao_strength = 0.6,
+        .ao_strength = if (state.ambient_occlusion_enabled) 0.6 else 0.0,
         .brightness = state.light.brightness,
+        .shadow_strength = if (state.shadows_enabled) 1.0 else 0.0,
     };
 
     sg.applyBindings(bind);
