@@ -432,6 +432,8 @@ export fn frame() void {
         ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs,
     );
     ig.igText("%4.1f fps \t %4.1f ms", 1 / t, t * 1000);
+    ig.igText("chunk remesh avg: %.3f ms", terrain_mod.remesh_stats.average_ms());
+    ig.igText("last remesh total: %.3f ms", terrain_mod.remesh_stats.last_process_ms());
 
     ig.igEnd();
 

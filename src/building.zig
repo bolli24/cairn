@@ -261,6 +261,12 @@ pub const EditPreview = struct {
     }
 
     fn remesh_affected(self: *@This(), terrain: *Terrain) void {
+        const remesh_start = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+        defer {
+            const remesh_end = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+            terrain_mod.remesh_stats.record_process(@intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds()));
+        }
+
         var it = self.chunks.keyIterator();
         while (it.next()) |chunk_pos| {
             terrain.remesh_at(Vec3_i32.new(

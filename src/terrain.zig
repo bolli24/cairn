@@ -24,6 +24,8 @@ pub const RaycastHit = struct {
 pub const ChunkBlocks = [CHUNK_SIZE][CHUNK_SIZE][CHUNK_SIZE]Block;
 pub const ChunkOverlay = std.AutoHashMap(Vec3_i32, *ChunkBlocks);
 
+pub var remesh_stats: RemeshStats = .{};
+
 pub const Terrain = struct {
     const Self = @This();
     chunks: std.AutoHashMap(Vec3_i32, Chunk),
@@ -497,6 +499,12 @@ pub const Chunk = struct {
     }
 
     pub fn update_mesh_with_overlay(self: *Self, allocator: std.mem.Allocator, terrain: ?*const Terrain, overlay: ?*const ChunkOverlay) void {
+        const remesh_start = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+        defer {
+            const remesh_end = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+            remesh_stats.record(@intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds()));
+        }
+
         self.mesh.vertices.clearRetainingCapacity();
         self.mesh.indices.clearRetainingCapacity();
         self.mesh.wireframe_indices.clearRetainingCapacity();
@@ -598,6 +606,40 @@ pub const Chunk = struct {
         }
 
         self.update_mesh(allocator);
+    }
+};
+
+pub const RemeshStats = struct {
+    const SAMPLE_COUNT = 10;
+
+    samples: [SAMPLE_COUNT]u64 = [_]u64{0} ** SAMPLE_COUNT,
+    next: usize = 0,
+    count: usize = 0,
+    last_process_nanos: u64 = 0,
+
+    pub fn record(self: *@This(), nanos: u64) void {
+        self.samples[self.next] = nanos;
+        self.next = (self.next + 1) % SAMPLE_COUNT;
+        self.count = @min(self.count + 1, SAMPLE_COUNT);
+    }
+
+    pub fn average_ms(self: *const @This()) f64 {
+        if (self.count == 0) return 0.0;
+
+        var total: u64 = 0;
+        for (self.samples[0..self.count]) |sample| {
+            total += sample;
+        }
+
+        return @as(f64, @floatFromInt(total)) / @as(f64, @floatFromInt(self.count)) / @as(f64, @floatFromInt(std.time.ns_per_ms));
+    }
+
+    pub fn record_process(self: *@This(), nanos: u64) void {
+        self.last_process_nanos = nanos;
+    }
+
+    pub fn last_process_ms(self: *const @This()) f64 {
+        return @as(f64, @floatFromInt(self.last_process_nanos)) / @as(f64, @floatFromInt(std.time.ns_per_ms));
     }
 };
 
