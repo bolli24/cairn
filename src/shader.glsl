@@ -105,7 +105,7 @@ void main() {
     float face_brightness = axis_weight.x * 0.8 + axis_weight.y * y_brightness + axis_weight.z * 0.6;
     float diff = max(dot(n, normalize(light_dir)), 0.0);
     float geom_diff = max(dot(geom_n, normalize(light_dir)), 0.0);
-    float bias = max(0.0015 * (1.0 - geom_diff), 0.0001);
+    float bias = max(0.00008 * (1.0 - geom_diff), 0.00005);
     float shadow = sample_shadow(frag_pos_light_space, bias) * shadow_strength;
     vec4 color = texture(sampler2D(color_map, color_smp), uv) * vec4(base_color, 1.0);
     vec3 diffuse = diff * light_color * brightness;

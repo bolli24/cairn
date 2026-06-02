@@ -225,6 +225,8 @@ export fn init() void {
             .write_enabled = true,
             .compare = .LESS_EQUAL,
             .pixel_format = .DEPTH,
+            .bias = 2.5,
+            .bias_slope_scale = 2.5,
         },
         .label = "shadow-pipeline",
     };
