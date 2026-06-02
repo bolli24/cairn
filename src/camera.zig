@@ -12,6 +12,7 @@ const sokol = @import("sokol");
 const sapp = sokol.app;
 
 const mesh_mod = @import("mesh.zig");
+const Ray = @import("terrain.zig").Ray;
 const Transform = mesh_mod.Transform;
 const InputState = @import("input.zig").InputState;
 
@@ -87,8 +88,8 @@ pub const Camera = struct {
         if (input.key_down(.R)) rot = rot.add(Vec2.new(0, KEY_ROTATION_SPEED * TILT_MULTIPLIER * dt));
         if (input.key_down(.F)) rot = rot.add(Vec2.new(0, -KEY_ROTATION_SPEED * TILT_MULTIPLIER * dt));
 
-        // Mouse rotation (middle mouse drag)
-        if (input.mouse_down(.MIDDLE)) {
+        // Mouse rotation (middle mouse drag or alt and mouse move)
+        if (input.mouse_down(.MIDDLE) or input.key_down(.LEFT_ALT)) {
             rot = rot.add(Vec2.new(
                 -input.mouse_delta.x() * MOUSE_ROTATION_SPEED,
                 input.mouse_delta.y() * MOUSE_ROTATION_SPEED * TILT_MULTIPLIER,
@@ -99,7 +100,7 @@ pub const Camera = struct {
     }
 
     /// Unprojects a screen-space pixel coordinate to a world-space ray direction.
-    pub fn screen_to_ray(self: *const Self, screen_pos: Vec2) Vec3 {
+    pub fn screen_to_ray(self: *const Self, screen_pos: Vec2, range: f32) Ray {
         // Convert pixel coords to NDC [-1, 1]
         const ndc_x = (2.0 * screen_pos.x() / sapp.widthf()) - 1.0;
         const ndc_y = 1.0 - (2.0 * screen_pos.y() / sapp.heightf());
@@ -116,7 +117,11 @@ pub const Camera = struct {
         const inv_view = self.viewMatrix().inv();
         const world = inv_view.mulByVec4(eye);
 
-        return Vec3.new(world.x(), world.y(), world.z()).norm();
+        return Ray{
+            .origin = self.transform.position,
+            .direction = Vec3.new(world.x(), world.y(), world.z()).norm(),
+            .range = range,
+        };
     }
 
     pub fn forward(self: *const Self) Vec3 {

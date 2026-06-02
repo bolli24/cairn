@@ -15,6 +15,8 @@ pub const Block = enum(u1) { air = 0, ground };
 
 pub const BoxI = struct { min: Vec3_i32, max: Vec3_i32 };
 
+pub const Ray = struct { origin: Vec3, direction: Vec3, range: f32 };
+
 pub const RaycastHit = struct {
     pos: Vec3_i32,
     previous: Vec3_i32,
@@ -185,10 +187,11 @@ pub const Terrain = struct {
         chunk.update_mesh_with_overlay(self.allocator, self, self.overlay);
     }
 
-    pub fn raycast(self: *const Self, origin: Vec3, direction: Vec3, range: f32) ?RaycastHit {
-        const end = origin.add(direction.norm().scale(range));
+    pub fn raycast(self: *const Self, ray: Ray) ?RaycastHit {
+        const origin = ray.origin;
+        const end = origin.add(ray.direction.norm().scale(ray.range));
         // Unnormalized ray from start to end, matching the C++ reference
-        const ray = end.sub(origin);
+        const path = end.sub(origin);
 
         // Current voxel (floor to block coordinates, bin_size = 1)
         var current = Vec3_i32.new(
@@ -204,9 +207,9 @@ pub const Terrain = struct {
         );
 
         // Step direction per axis (+1 or -1)
-        const step_x: i32 = if (ray.x() >= 0) 1 else -1;
-        const step_y: i32 = if (ray.y() >= 0) 1 else -1;
-        const step_z: i32 = if (ray.z() >= 0) 1 else -1;
+        const step_x: i32 = if (path.x() >= 0) 1 else -1;
+        const step_y: i32 = if (path.y() >= 0) 1 else -1;
+        const step_z: i32 = if (path.z() >= 0) 1 else -1;
 
         // Distance to next voxel boundary (bin_size = 1)
         const fstep_x: f32 = @floatFromInt(step_x);
@@ -221,27 +224,27 @@ pub const Terrain = struct {
         const next_boundary_z = (cur_z + fstep_z);
 
         // tMax: distance along ray to next voxel boundary per axis
-        var t_max_x: f32 = if (ray.x() != 0) (next_boundary_x - origin.x()) / ray.x() else std.math.floatMax(f32);
-        var t_max_y: f32 = if (ray.y() != 0) (next_boundary_y - origin.y()) / ray.y() else std.math.floatMax(f32);
-        var t_max_z: f32 = if (ray.z() != 0) (next_boundary_z - origin.z()) / ray.z() else std.math.floatMax(f32);
+        var t_max_x: f32 = if (path.x() != 0) (next_boundary_x - origin.x()) / path.x() else std.math.floatMax(f32);
+        var t_max_y: f32 = if (path.y() != 0) (next_boundary_y - origin.y()) / path.y() else std.math.floatMax(f32);
+        var t_max_z: f32 = if (path.z() != 0) (next_boundary_z - origin.z()) / path.z() else std.math.floatMax(f32);
 
         // tDelta: how far along ray to cross one voxel per axis
-        const t_delta_x: f32 = if (ray.x() != 0) 1.0 / ray.x() * fstep_x else std.math.floatMax(f32);
-        const t_delta_y: f32 = if (ray.y() != 0) 1.0 / ray.y() * fstep_y else std.math.floatMax(f32);
-        const t_delta_z: f32 = if (ray.z() != 0) 1.0 / ray.z() * fstep_z else std.math.floatMax(f32);
+        const t_delta_x: f32 = if (path.x() != 0) 1.0 / path.x() * fstep_x else std.math.floatMax(f32);
+        const t_delta_y: f32 = if (path.y() != 0) 1.0 / path.y() * fstep_y else std.math.floatMax(f32);
+        const t_delta_z: f32 = if (path.z() != 0) 1.0 / path.z() * fstep_z else std.math.floatMax(f32);
 
         // Negative ray correction
         var diff = Vec3_i32.new(0, 0, 0);
         var neg_ray = false;
-        if (current.x() != last.x() and ray.x() < 0) {
+        if (current.x() != last.x() and path.x() < 0) {
             diff = Vec3_i32.new(diff.x() - 1, diff.y(), diff.z());
             neg_ray = true;
         }
-        if (current.y() != last.y() and ray.y() < 0) {
+        if (current.y() != last.y() and path.y() < 0) {
             diff = Vec3_i32.new(diff.x(), diff.y() - 1, diff.z());
             neg_ray = true;
         }
-        if (current.z() != last.z() and ray.z() < 0) {
+        if (current.z() != last.z() and path.z() < 0) {
             diff = Vec3_i32.new(diff.x(), diff.y(), diff.z() - 1);
             neg_ray = true;
         }

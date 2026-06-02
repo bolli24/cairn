@@ -61,8 +61,7 @@ pub const BuildingState = struct {
             return;
         }
 
-        const ray_dir = camera.screen_to_ray(input.mouse_pos);
-        const hit = terrain.raycast(camera.transform.position, ray_dir, RAYCAST_RANGE);
+        const hit = terrain.raycast(camera.screen_to_ray(input.mouse_pos, 500));
 
         if (self.pos1 == null) {
             // State: waiting for first point

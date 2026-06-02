@@ -344,7 +344,7 @@ export fn frame() void {
     state.building.update(&state.input, &state.camera, &state.terrain, &state.shapes);
 
     if (!state.building.active and state.input.mouse_pressed(.LEFT)) {
-        if (state.terrain.raycast(state.camera.transform.position, state.camera.forward(), 500.0)) |hit| {
+        if (state.terrain.raycast(state.camera.screen_to_ray(state.input.mouse_pos, 500))) |hit| {
             state.terrain.set_block(hit.previous, .ground, true);
         }
     }
@@ -369,7 +369,10 @@ export fn frame() void {
 
     // Main pass
     var pass = sg.Pass{ .swapchain = sglue.swapchain() };
-    pass.action.colors[0] = .{ .load_action = .CLEAR, .clear_value = .{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1.0 } };
+    pass.action.colors[0] = .{
+        .load_action = .CLEAR,
+        .clear_value = .{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1.0 },
+    };
     pass.action.depth = .{ .load_action = .CLEAR, .clear_value = 1.0 };
 
     sg.beginPass(pass);
@@ -391,12 +394,13 @@ export fn frame() void {
     state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(0, 20, 10), Vec4.new(0, 0, 1, 1), 0.2);
 
     if (state.show_light_rays) {
-        if (state.terrain.raycast(state.camera.transform.position, state.camera.screen_to_ray(state.input.mouse_pos), 500.0)) |hit| {
+        const ray = state.camera.screen_to_ray(state.input.mouse_pos, 500.0);
+        if (state.terrain.raycast(ray)) |hit| {
             const p = hit.pos;
             const x: f32 = @floatFromInt(p.x());
             const y: f32 = @floatFromInt(p.y());
             const z: f32 = @floatFromInt(p.z());
-            const ray = state.light.dir.scale(2.0);
+            const light_ray = state.light.dir.scale(2.0);
             const color = Vec4.new(1, 1, 0, 1);
             const top_vertices = [4]Vec3{
                 Vec3.new(x, y + 1, z),
@@ -405,7 +409,7 @@ export fn frame() void {
                 Vec3.new(x + 1, y + 1, z + 1),
             };
             for (top_vertices) |v| {
-                state.shapes.line_3d(v, v.add(ray), color, 0.05);
+                state.shapes.line_3d(v, v.add(light_ray), color, 0.05);
             }
         }
     }
