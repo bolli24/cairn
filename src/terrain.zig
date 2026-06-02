@@ -470,7 +470,15 @@ pub const Chunk = struct {
                 var dz: i32 = -1;
                 while (dz <= 1) : (dz += 1) {
                     if (dx == 0 and dy == 0 and dz == 0) continue;
-                    if (!is_solid(blocks, terrain, overlay, chunk_origin, bx + dx, by + dy, bz + dz)) continue;
+                    if (!is_solid(
+                        blocks,
+                        terrain,
+                        overlay,
+                        chunk_origin,
+                        bx + dx,
+                        by + dy,
+                        bz + dz,
+                    )) continue;
 
                     solid_x += @floatFromInt(dx);
                     solid_y += @floatFromInt(dy);
@@ -499,6 +507,25 @@ pub const Chunk = struct {
         if (facing <= 0.0) return fallback;
 
         return Vec3.new(nx, ny, nz);
+    }
+
+    fn face_rotation(chunk_origin: Vec3_i32, x: usize, y: usize, z: usize) usize {
+        const wx = chunk_origin.x() + @as(i32, @intCast(x));
+        const wy = chunk_origin.y() + @as(i32, @intCast(y));
+        const wz = chunk_origin.z() + @as(i32, @intCast(z));
+
+        var h: u32 = 0;
+        h +%= @as(u32, @bitCast(wx)) *% 73856093;
+        h +%= @as(u32, @bitCast(wy)) *% 19349663;
+        h +%= @as(u32, @bitCast(wz)) *% 83492791;
+
+        h ^= h >> 16;
+        h *%= 0x7feb352d;
+        h ^= h >> 15;
+        h *%= 0x846ca68b;
+        h ^= h >> 16;
+
+        return @intCast(h & 3);
     }
 
     pub fn update_mesh_with_overlay(self: *Self, allocator: std.mem.Allocator, terrain: ?*const Terrain, overlay: ?*const ChunkOverlay) void {
@@ -544,7 +571,17 @@ pub const Chunk = struct {
                             break :estimate computed;
                         };
                         const normal = face_surface_normal(estimate, face.normal);
-                        const face_uvs = [4][2]f32{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 }, .{ 0, 0 } };
+                        // const face_uvs = [4][2]f32{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 }, .{ 0, 0 } };
+                        const face_uvs_v = [4][4][2]f32{
+                            .{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 }, .{ 0, 0 } },
+                            .{ .{ 1, 1 }, .{ 1, 0 }, .{ 0, 0 }, .{ 0, 1 } },
+                            .{ .{ 1, 0 }, .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 } },
+                            .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 } },
+                        };
+                        // @as(usize, @intCast(self.pos.x())) * @as(usize, @intCast(self.pos.y())) * @as(usize, @intCast(self.pos.z()))
+                        const variant = face_rotation(chunk_origin, x, y, z);
+                        const face_uvs = face_uvs_v[variant];
+
                         var ao_vals: [4]f32 = undefined;
                         for (face.verts, 0..) |v, vert_i| {
                             ao_vals[vert_i] = vertex_ao(vert_i, x, y, z, face, blocks, terrain, overlay, chunk_origin);
