@@ -544,7 +544,7 @@ pub const Chunk = struct {
                             break :estimate computed;
                         };
                         const normal = face_surface_normal(estimate, face.normal);
-                        const face_uvs = [4][2]f32{ .{ 1, 0 }, .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 } };
+                        const face_uvs = [4][2]f32{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 }, .{ 0, 0 } };
                         var ao_vals: [4]f32 = undefined;
                         for (face.verts, 0..) |v, vert_i| {
                             ao_vals[vert_i] = vertex_ao(vert_i, x, y, z, face, blocks, terrain, overlay, chunk_origin);
