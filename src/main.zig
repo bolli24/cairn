@@ -497,6 +497,7 @@ export fn event_handler(maybe_event: [*c]const sapp.Event) void {
         .MOUSE_SCROLL => {
             state.input.scroll_delta = state.input.scroll_delta.add(Vec2.new(event.scroll_x, event.scroll_y));
         },
+        .UNFOCUSED, .SUSPENDED => state.input.reset(),
         else => {},
     }
 

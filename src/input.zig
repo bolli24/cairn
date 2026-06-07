@@ -91,4 +91,11 @@ pub const InputState = struct {
             }
         }
     }
+
+    pub fn reset(self: *Self) void {
+        self.keys = [_]KeyState{.up} ** MAX_KEY;
+        self.mouse_buttons = [_]KeyState{.up} ** 3;
+        self.mouse_delta = Vec2.zero();
+        self.scroll_delta = Vec2.zero();
+    }
 };
