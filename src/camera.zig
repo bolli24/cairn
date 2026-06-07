@@ -21,7 +21,7 @@ const MOUSE_ROTATION_SPEED: f32 = 0.2; // degrees per pixel
 const KEY_ROTATION_SPEED: f32 = 40.0; // degrees per second
 const TILT_MULTIPLIER: f32 = 0.8;
 const ZOOM_SPEED: f32 = 1.0;
-const MOUSE_ZOOM_MULTIPLIER: f32 = 0.04;
+const MOUSE_ZOOM_MULTIPLIER: f32 = 0.06;
 
 pub const Camera = struct {
     const Self = @This();

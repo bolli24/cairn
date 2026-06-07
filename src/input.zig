@@ -73,6 +73,24 @@ pub const InputState = struct {
         self.mouse_buttons[idx] = s;
     }
 
+    pub fn handle_event(self: *Self, event: sapp.Event) void {
+        switch (event.type) {
+            .KEY_DOWN => if (!event.key_repeat) self.setKey(event.key_code, .pressed),
+            .KEY_UP => self.setKey(event.key_code, .released),
+            .MOUSE_DOWN => self.setMouse(event.mouse_button, .pressed),
+            .MOUSE_UP => self.setMouse(event.mouse_button, .released),
+            .MOUSE_MOVE => {
+                self.mouse_pos = Vec2.new(event.mouse_x, event.mouse_y);
+                self.mouse_delta = self.mouse_delta.add(Vec2.new(event.mouse_dx, event.mouse_dy));
+            },
+            .MOUSE_SCROLL => {
+                self.scroll_delta = self.scroll_delta.add(Vec2.new(event.scroll_x, event.scroll_y));
+            },
+            .UNFOCUSED, .SUSPENDED => self.reset(),
+            else => {},
+        }
+    }
+
     pub fn update(self: *Self) void {
         for (&self.keys) |*k| {
             switch (k.*) {

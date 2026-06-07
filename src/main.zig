@@ -484,22 +484,7 @@ fn submit_mesh(mesh: *const Mesh) void {
 
 export fn event_handler(maybe_event: [*c]const sapp.Event) void {
     const event = maybe_event.*;
-    // const t = sapp.frameDuration();
-    switch (event.type) {
-        .KEY_DOWN => if (!event.key_repeat) state.input.setKey(event.key_code, .pressed),
-        .KEY_UP => state.input.setKey(event.key_code, .released),
-        .MOUSE_DOWN => state.input.setMouse(event.mouse_button, .pressed),
-        .MOUSE_UP => state.input.setMouse(event.mouse_button, .released),
-        .MOUSE_MOVE => {
-            state.input.mouse_pos = Vec2.new(event.mouse_x, event.mouse_y);
-            state.input.mouse_delta = state.input.mouse_delta.add(Vec2.new(event.mouse_dx, event.mouse_dy));
-        },
-        .MOUSE_SCROLL => {
-            state.input.scroll_delta = state.input.scroll_delta.add(Vec2.new(event.scroll_x, event.scroll_y));
-        },
-        .UNFOCUSED, .SUSPENDED => state.input.reset(),
-        else => {},
-    }
+    state.input.handle_event(event);
 
     _ = simgui.handleEvent(maybe_event.*);
 }
