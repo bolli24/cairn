@@ -20,6 +20,7 @@ pub const Ray = struct { origin: Vec3, direction: Vec3, range: f32 };
 pub const RaycastHit = struct {
     pos: Vec3_i32,
     previous: Vec3_i32,
+    point: Vec3,
     block: Block,
 };
 
@@ -253,32 +254,37 @@ pub const Terrain = struct {
         var previous = current;
         const start_block = self.get_block(current);
         if (start_block != .air) {
-            return .{ .pos = current, .previous = current, .block = start_block };
+            return .{ .pos = current, .previous = current, .point = origin, .block = start_block };
         }
 
         if (neg_ray) {
             current = current.add(diff);
             const block = self.get_block(current);
             if (block != .air) {
-                return .{ .pos = current, .previous = previous, .block = block };
+                return .{ .pos = current, .previous = previous, .point = origin, .block = block };
             }
         }
 
         while (!std.meta.eql(last, current)) {
             previous = current;
+            var hit_t: f32 = 0.0;
             if (t_max_x < t_max_y) {
                 if (t_max_x < t_max_z) {
+                    hit_t = t_max_x;
                     current = Vec3_i32.new(current.x() + step_x, current.y(), current.z());
                     t_max_x += t_delta_x;
                 } else {
+                    hit_t = t_max_z;
                     current = Vec3_i32.new(current.x(), current.y(), current.z() + step_z);
                     t_max_z += t_delta_z;
                 }
             } else {
                 if (t_max_y < t_max_z) {
+                    hit_t = t_max_y;
                     current = Vec3_i32.new(current.x(), current.y() + step_y, current.z());
                     t_max_y += t_delta_y;
                 } else {
+                    hit_t = t_max_z;
                     current = Vec3_i32.new(current.x(), current.y(), current.z() + step_z);
                     t_max_z += t_delta_z;
                 }
@@ -286,7 +292,7 @@ pub const Terrain = struct {
 
             const block = self.get_block(current);
             if (block != .air) {
-                return .{ .pos = current, .previous = previous, .block = block };
+                return .{ .pos = current, .previous = previous, .point = origin.add(path.scale(hit_t)), .block = block };
             }
         }
         return null;

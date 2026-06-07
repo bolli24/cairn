@@ -2,7 +2,6 @@ const std = @import("std");
 const math = @import("std").math;
 
 const za = @import("zalgebra");
-const Vec2 = za.Vec2;
 const Vec3 = za.Vec3;
 const Vec3_i32 = za.Vec3_i32;
 const Vec4 = za.Vec4;
@@ -200,8 +199,9 @@ export fn init() void {
     logStartupSection("terrain generation", &section_timer);
 
     state.building = BuildingState.init(gpa.allocator());
-    state.camera.target_pos = Vec2.new(
+    state.camera.target_pos = Vec3.new(
         @floatFromInt(terrain_size.x() * terrain_mod.CHUNK_SIZE / 2),
+        0.0,
         @floatFromInt(terrain_size.z() * terrain_mod.CHUNK_SIZE / 2),
     );
     logStartupSection("building camera init", &section_timer);
@@ -325,7 +325,7 @@ export fn frame() void {
     }
     sgimgui.draw();
 
-    state.camera.update(t, &state.input);
+    state.camera.update(t, &state.input, &state.terrain);
 
     if (state.input.key_pressed(.F1)) {
         state.wireframe = !state.wireframe;
