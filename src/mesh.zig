@@ -34,19 +34,32 @@ pub const Mesh = struct {
     transform: Transform = .{},
     color: Vec3 = Vec3.one().scale(0.5),
 
-    fn init(vertices: []const Vec3, indices: []const u16, allocator: std.mem.Allocator) !Self {
-        var self: Self = .{ .allocator = allocator };
-
-        try self.vertices.appendSlice(allocator, vertices);
-        try self.indices.appendSlice(allocator, indices);
-
-        return self;
-    }
-
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         self.vertices.deinit(allocator);
         self.indices.deinit(allocator);
         self.wireframe_indices.deinit(allocator);
+    }
+
+    pub fn clear_geometry(self: *Self) void {
+        self.vertices.clearRetainingCapacity();
+        self.indices.clearRetainingCapacity();
+        self.wireframe_indices.clearRetainingCapacity();
+    }
+
+    pub fn update_wireframe(self: *Self, allocator: std.mem.Allocator) !void {
+        std.debug.assert(self.indices.items.len % 3 == 0);
+
+        self.wireframe_indices.clearRetainingCapacity();
+        try self.wireframe_indices.ensureTotalCapacity(allocator, self.indices.items.len * 2);
+
+        var i: usize = 0;
+        while (i < self.indices.items.len) : (i += 3) {
+            const a = self.indices.items[i];
+            const b = self.indices.items[i + 1];
+            const c = self.indices.items[i + 2];
+
+            try self.wireframe_indices.appendSlice(allocator, &.{ a, b, b, c, c, a });
+        }
     }
 
     pub fn upload(self: *Self) void {

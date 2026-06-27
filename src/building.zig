@@ -15,12 +15,19 @@ const terrain_mod = @import("terrain.zig");
 const Terrain = terrain_mod.Terrain;
 const Block = terrain_mod.Block;
 const Shapes = @import("shapes.zig").Shapes;
+const mesh_mod = @import("mesh.zig");
+const Mesh = mesh_mod.Mesh;
+const Vertex = mesh_mod.Vertex;
+const Transform = mesh_mod.Transform;
 
 const MARKER_COLOR = Vec4.new(1, 1, 0, 1);
 const LINE_COLOR = Vec4.new(0, 1, 1, 1);
 const CONFIRM_COLOR = Vec4.new(0, 1, 0, 1);
 const LINE_THICKNESS: f32 = 0.15;
 const RAYCAST_RANGE: f32 = 500.0;
+const SEGMENT_LENGTH: f32 = 5.0;
+const VERTS_PER_SEGMENT: usize = 2;
+const FACES_PER_SEGMENT: usize = 2;
 
 pub const BuildingState = struct {
     const Self = @This();
@@ -32,12 +39,51 @@ pub const BuildingState = struct {
     preview: EditPreview = undefined,
     preview_active: bool = false,
 
+    mesh: Mesh,
+    mesh_length: f32 = 0.0,
+    mesh_segment_count: usize = 0,
+
+    allocator: std.mem.Allocator,
+
     pub fn init(allocator: std.mem.Allocator) Self {
-        return .{ .preview = EditPreview.init(allocator) };
+        return .{
+            .preview = EditPreview.init(allocator),
+            .mesh = .{},
+            .allocator = allocator,
+        };
     }
 
     pub fn deinit(self: *Self) void {
         self.preview.deinit();
+        self.mesh.deinit(self.allocator);
+    }
+
+    //  a - c   c, d - new vertices         c - at pos
+    //  | / |
+    //  b - d   a, b - existing vertices    d - offset
+
+    pub fn add_segment(self: *Self) !void {
+        std.debug.assert(VERTS_PER_SEGMENT == 2);
+
+        const vertices = [2]Vertex{
+            .{},
+            .{},
+        };
+
+        try self.mesh.vertices.appendSlice(self.allocator, &vertices);
+
+        if (self.mesh.vertices.items.len == VERTS_PER_SEGMENT) {
+            return;
+        }
+
+        const a = @as(u16, @intCast(self.mesh.vertices.items.len)) - 4;
+        const b = a + 1;
+        const c = b + 1;
+        const d = c + 1;
+
+        const indices = [6]u16{ a, b, c, b, d, c };
+
+        try self.mesh.indices.appendSlice(self.allocator, &indices);
     }
 
     pub fn update(self: *Self, input: *InputState, camera: *const Camera, terrain: *Terrain, shapes: *Shapes) void {
@@ -73,12 +119,16 @@ pub const BuildingState = struct {
             }
         } else if (self.pos2 == null) {
             // State: first point set, waiting for second point
-            const p1f = self.pos1.?.cast(f32);
             draw_cube_marker(shapes, self.pos1.?, MARKER_COLOR);
 
             if (hit) |h| {
                 const cursor_f = h.pos.cast(f32);
-                shapes.line_3d(p1f.add(Vec3.new(0.5, 0.5, 0.5)), cursor_f.add(Vec3.new(0.5, 0.5, 0.5)), LINE_COLOR, LINE_THICKNESS);
+                shapes.line_3d(
+                    self.pos1.?.cast(f32).add(Vec3.new(0.5, 0.5, 0.5)),
+                    cursor_f.add(Vec3.new(0.5, 0.5, 0.5)),
+                    LINE_COLOR,
+                    LINE_THICKNESS,
+                );
                 draw_cube_marker(shapes, h.pos, LINE_COLOR);
 
                 if (self.prev_hit == null or !self.prev_hit.?.eql(h.pos)) {
@@ -89,9 +139,51 @@ pub const BuildingState = struct {
                     self.prev_hit = h.pos;
                     const p1 = self.pos1.?.add(Vec3_i32.new(0, 3, 0));
                     const p2 = h.pos.add(Vec3_i32.new(0, 3, 0));
+                    const p1f = p1.cast(f32);
+                    const p2f = p2.cast(f32);
+                    const dir = p2f.sub(p1f);
+
                     self.preview.add_block_path(terrain, p1, p2, 3.9, .air, .circle);
                     self.preview.show(terrain);
                     self.preview_active = true;
+
+                    const new_length = dir.length();
+                    const segment_count: usize = @as(usize, @trunc(new_length / SEGMENT_LENGTH)) + 1;
+                    const vertex_count = (segment_count + 1) * VERTS_PER_SEGMENT;
+                    const index_count = segment_count * FACES_PER_SEGMENT * 3;
+
+                    if (self.mesh_segment_count > segment_count) {
+                        self.mesh.vertices.shrinkRetainingCapacity(vertex_count);
+                        self.mesh.indices.shrinkRetainingCapacity(index_count);
+                    }
+                    const normal = dir.cross(Vec3.up()).norm();
+
+                    if (self.mesh_segment_count == 0) {
+                        const pos = p1f;
+                        self.add_segment() catch return;
+                        self.mesh.vertices.items[0] = .{ .pos = pos, .normal = normal };
+                        self.mesh.vertices.items[1] = .{ .pos = .new(pos.x(), pos.y() + 0.5, pos.z()), .normal = normal };
+                    }
+
+                    for (0..segment_count + 1) |i| {
+                        if (i >= self.mesh_segment_count and i < segment_count) {
+                            self.add_segment() catch return;
+                        }
+
+                        const pos = p1f.add(dir.scale(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segment_count))));
+
+                        std.debug.assert(VERTS_PER_SEGMENT == 2);
+                        self.mesh.vertices.items[2 * i] = .{ .pos = pos, .normal = normal };
+                        self.mesh.vertices.items[2 * i + 1] = .{ .pos = .new(pos.x(), pos.y() + 0.5, pos.z()), .normal = normal };
+                    }
+
+                    std.debug.assert(self.mesh.vertices.items.len == vertex_count);
+                    std.debug.assert(self.mesh.indices.items.len == index_count);
+
+                    self.mesh.update_wireframe(self.allocator) catch return;
+                    self.mesh.upload();
+                    self.mesh_segment_count = segment_count;
+                    self.mesh_length = new_length;
                 }
 
                 if (input.mouse_pressed(.LEFT)) {
@@ -120,6 +212,9 @@ pub const BuildingState = struct {
         self.pos1 = null;
         self.pos2 = null;
         self.prev_hit = null;
+        self.mesh.clear_geometry();
+        self.mesh_length = 0;
+        self.mesh_segment_count = 0;
     }
 
     fn revert_preview(self: *Self, terrain: *Terrain) void {

@@ -604,16 +604,8 @@ pub const Chunk = struct {
                         const flip = ao_vals[0] + ao_vals[2] > ao_vals[1] + ao_vals[3];
                         if (!flip) {
                             self.mesh.indices.appendSlice(allocator, &.{ base + 1, base + 2, base + 3, base + 1, base + 3, base }) catch return;
-                            self.mesh.wireframe_indices.appendSlice(allocator, &.{
-                                base + 1, base + 2, base + 2, base + 3, base + 3, base + 1,
-                                base + 1, base + 3, base + 3, base,     base,     base + 1,
-                            }) catch return;
                         } else {
                             self.mesh.indices.appendSlice(allocator, &.{ base, base + 1, base + 2, base, base + 2, base + 3 }) catch return;
-                            self.mesh.wireframe_indices.appendSlice(allocator, &.{
-                                base, base + 1, base + 1, base + 2, base + 2, base,
-                                base, base + 2, base + 2, base + 3, base + 3, base,
-                            }) catch return;
                         }
                     }
                 }
@@ -621,6 +613,7 @@ pub const Chunk = struct {
         }
 
         if (self.mesh.vertices.items.len > 0) {
+            self.mesh.update_wireframe(allocator) catch return;
             self.mesh.upload();
         }
     }

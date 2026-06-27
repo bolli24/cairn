@@ -390,6 +390,10 @@ export fn frame() void {
         submit_mesh(mesh);
     }
 
+    if (state.building.active and state.building.mesh_segment_count > 0) {
+        submit_mesh(&state.building.mesh);
+    }
+
     // Test lines
     state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(10, 20, 0), Vec4.new(1, 0, 0, 1), 0.2);
     state.shapes.line_3d(Vec3.new(0, 20, 0), Vec3.new(0, 30, 0), Vec4.new(0, 1, 0, 1), 0.2);
@@ -435,11 +439,21 @@ export fn frame() void {
     _ = ig.igBegin(
         "debug_text",
         null,
-        ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs,
+        ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs | ig.ImGuiWindowFlags_AlwaysAutoResize,
     );
     ig.igText("%4.1f fps \t %4.1f ms", 1 / t, t * 1000);
     ig.igText("chunk remesh avg: %.3f ms", terrain_mod.remesh_stats.average_ms());
     ig.igText("last remesh total: %.3f ms", terrain_mod.remesh_stats.last_process_ms());
+    if (state.building.active) {
+        const mesh = &state.building.mesh;
+        ig.igText(
+            "%i segments, %i vertices, %i triangles, %.1f",
+            state.building.mesh_segment_count,
+            mesh.vertices.items.len,
+            mesh.indices.items.len / 3,
+            state.building.mesh_length,
+        );
+    }
 
     ig.igEnd();
 
@@ -533,7 +547,7 @@ fn compute_light_view_proj() Mat4 {
     const scene_center = Vec3.new(96.0, 24.0, 96.0);
     const light_dir = state.light.dir;
     const light_eye = scene_center.add(light_dir.scale(250.0));
-    const light_view = Mat4.lookAt(light_eye, scene_center, Vec3.new(0.0, 0.0, 1.0));
+    const light_view = Mat4.lookAt(light_eye, scene_center, Vec3.new(0.0, 1.0, 0.0));
     const light_proj = Mat4.orthographic(-150.0, 150.0, -150.0, 150.0, 0.1, 600.0);
     return light_proj.mul(light_view);
 }
