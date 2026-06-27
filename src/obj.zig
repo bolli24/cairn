@@ -2,11 +2,12 @@ const std = @import("std");
 const za = @import("zalgebra");
 const Vec3 = za.Vec3;
 const lib = @import("mesh.zig");
+const resource = @import("resource.zig");
 
 const BUF_LEN = 1024;
 
 pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !lib.Mesh {
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, file_path, .{});
+    const file = try resource.openFile(allocator, file_path, .{});
     defer file.close(std.Options.debug_io);
 
     var read_buf: [BUF_LEN]u8 = undefined;
