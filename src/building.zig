@@ -25,9 +25,23 @@ const LINE_COLOR = Vec4.new(0, 1, 1, 1);
 const CONFIRM_COLOR = Vec4.new(0, 1, 0, 1);
 const LINE_THICKNESS: f32 = 0.15;
 const RAYCAST_RANGE: f32 = 500.0;
+
 const SEGMENT_LENGTH: f32 = 5.0;
-const VERTS_PER_SEGMENT: usize = 2;
-const FACES_PER_SEGMENT: usize = 2;
+const WIDTH: f32 = 0.5;
+const HEIGHT: f32 = 0.8;
+const VERTEX_OFFSETS = [_]Vec3{
+    .new(-WIDTH / 2.0, 0.0, 0.0), //      a
+    .new(WIDTH / 2.0, 0.0, 0.0), //       b
+    .new(WIDTH / 2.0, 0.0, 0.0), //       b
+    .new(WIDTH / 2.0, HEIGHT, 0.0), //    c
+    .new(WIDTH / 2.0, HEIGHT, 0.0), //    c
+    .new(-WIDTH / 2.0, HEIGHT, 0.0), //   d
+    .new(-WIDTH / 2.0, HEIGHT, 0.0), //   d
+    .new(-WIDTH / 2.0, 0.0, 0.0), //      a
+};
+const VERTS_PER_SEGMENT: usize = VERTEX_OFFSETS.len;
+const FACES_PER_SEGMENT: usize = 2 * 4; // 2 faces per side
+const CAP_INDEX_COUNT: usize = 2 * 3 * 2; // 2 triangles per cap, 2 caps
 
 pub const BuildingState = struct {
     const Self = @This();
@@ -63,25 +77,24 @@ pub const BuildingState = struct {
     //  b - d   a, b - existing vertices    d - offset
 
     pub fn add_segment(self: *Self) !void {
-        std.debug.assert(VERTS_PER_SEGMENT == 2);
-
-        const vertices = [2]Vertex{
-            .{},
-            .{},
-        };
-
-        try self.mesh.vertices.appendSlice(self.allocator, &vertices);
+        _ = try self.mesh.vertices.addManyAsSlice(self.allocator, VERTS_PER_SEGMENT);
 
         if (self.mesh.vertices.items.len == VERTS_PER_SEGMENT) {
             return;
         }
 
-        const a = @as(u16, @intCast(self.mesh.vertices.items.len)) - 4;
-        const b = a + 1;
-        const c = b + 1;
-        const d = c + 1;
+        const p = @as(u16, @intCast(self.mesh.vertices.items.len - VERTS_PER_SEGMENT * 2)); // first index of previous segment vertices
+        const c = @as(u16, @intCast(self.mesh.vertices.items.len - VERTS_PER_SEGMENT)); // first index of new segment vertices
 
-        const indices = [6]u16{ a, b, c, b, d, c };
+        var indices: [FACES_PER_SEGMENT * 3]u16 = undefined;
+
+        inline for (0..FACES_PER_SEGMENT / 2) |side| {
+            const vi: u16 = @intCast(side * 2);
+            const ii = side * 6;
+
+            indices[ii..][0..3].* = .{ p + vi, c + vi + 1, c + vi };
+            indices[ii + 3 ..][0..3].* = .{ p + vi, p + vi + 1, c + vi + 1 };
+        }
 
         try self.mesh.indices.appendSlice(self.allocator, &indices);
     }
@@ -115,6 +128,7 @@ pub const BuildingState = struct {
                 draw_cube_marker(shapes, h.pos, MARKER_COLOR);
                 if (input.mouse_pressed(.LEFT)) {
                     self.pos1 = h.pos;
+                    self.mesh.transform.position = self.pos1.?.add(Vec3_i32.new(0, 3, 0)).cast(f32);
                 }
             }
         } else if (self.pos2 == null) {
@@ -150,32 +164,56 @@ pub const BuildingState = struct {
                     const new_length = dir.length();
                     const segment_count: usize = @as(usize, @trunc(new_length / SEGMENT_LENGTH)) + 1;
                     const vertex_count = (segment_count + 1) * VERTS_PER_SEGMENT;
-                    const index_count = segment_count * FACES_PER_SEGMENT * 3;
+                    const side_index_count = segment_count * FACES_PER_SEGMENT * 3;
+                    const index_count = side_index_count + CAP_INDEX_COUNT;
+
+                    if (self.mesh_segment_count > 0) {
+                        const current_side_index_count = self.mesh_segment_count * FACES_PER_SEGMENT * 3;
+                        self.mesh.indices.shrinkRetainingCapacity(current_side_index_count);
+                    }
 
                     if (self.mesh_segment_count > segment_count) {
                         self.mesh.vertices.shrinkRetainingCapacity(vertex_count);
-                        self.mesh.indices.shrinkRetainingCapacity(index_count);
+                        self.mesh.indices.shrinkRetainingCapacity(side_index_count);
                     }
-                    const normal = dir.cross(Vec3.up()).norm();
 
                     if (self.mesh_segment_count == 0) {
-                        const pos = p1f;
                         self.add_segment() catch return;
-                        self.mesh.vertices.items[0] = .{ .pos = pos, .normal = normal };
-                        self.mesh.vertices.items[1] = .{ .pos = .new(pos.x(), pos.y() + 0.5, pos.z()), .normal = normal };
+
+                        inline for (VERTEX_OFFSETS, 0..) |value, i| {
+                            self.mesh.vertices.items[i] = .{ .pos = value }; // FIXME: normal
+                        }
                     }
+
+                    const forward = dir.norm();
+                    const right = Vec3.new(0, 1, 0).cross(forward).norm();
+                    const up = forward.cross(right).norm();
 
                     for (0..segment_count + 1) |i| {
                         if (i >= self.mesh_segment_count and i < segment_count) {
                             self.add_segment() catch return;
                         }
 
-                        const pos = p1f.add(dir.scale(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segment_count))));
+                        const pos = dir.scale(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(segment_count)));
 
-                        std.debug.assert(VERTS_PER_SEGMENT == 2);
-                        self.mesh.vertices.items[2 * i] = .{ .pos = pos, .normal = normal };
-                        self.mesh.vertices.items[2 * i + 1] = .{ .pos = .new(pos.x(), pos.y() + 0.5, pos.z()), .normal = normal };
+                        inline for (VERTEX_OFFSETS, 0..) |offset, j| {
+                            const oriented_offset = right.scale(offset.x())
+                                .add(up.scale(offset.y()))
+                                .add(forward.scale(offset.z()));
+
+                            self.mesh.vertices.items[i * VERTS_PER_SEGMENT + j] = .{ .pos = pos.add(oriented_offset) }; // FIXME: normal
+                        }
                     }
+
+                    const start: u16 = 0;
+                    const end: u16 = @intCast(segment_count * VERTS_PER_SEGMENT);
+                    const cap_indices = [_]u16{
+                        start + 0, start + 3, start + 1,
+                        start + 0, start + 5, start + 3,
+                        end + 0,   end + 1,   end + 3,
+                        end + 0,   end + 3,   end + 5,
+                    };
+                    self.mesh.indices.appendSlice(self.allocator, &cap_indices) catch return;
 
                     std.debug.assert(self.mesh.vertices.items.len == vertex_count);
                     std.debug.assert(self.mesh.indices.items.len == index_count);
