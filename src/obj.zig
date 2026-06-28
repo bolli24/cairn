@@ -41,7 +41,6 @@ pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !
         writer.end = 0;
     }
 
-    std.debug.print("Loaded {} vertices, {} indices\n", .{ mesh.vertices.items.len, mesh.indices.items.len });
     return mesh;
 }
 
@@ -144,7 +143,4 @@ test "load_mesh_from_obj parses vertices, normals and indices" {
     try std.testing.expect(data.vertices.items.len > 0);
     try std.testing.expect(data.indices.items.len > 0);
     try std.testing.expect(data.indices.items.len % 3 == 0);
-    std.debug.print("First vertex: ({d}, {d}, {d})\n", .{ data.vertices.items[0].pos.x(), data.vertices.items[0].pos.y(), data.vertices.items[0].pos.z() });
-    std.debug.print("First normal: ({d}, {d}, {d})\n", .{ data.vertices.items[0].normal.x(), data.vertices.items[0].normal.y(), data.vertices.items[0].normal.z() });
-    std.debug.print("Triangles: {}\n", .{data.indices.items.len / 3});
 }
