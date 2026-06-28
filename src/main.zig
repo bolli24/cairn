@@ -24,13 +24,11 @@ const use_docking = @import("build_options").docking;
 const ig = if (use_docking) @import("cimgui_docking") else @import("cimgui");
 
 const obj = @import("obj.zig");
-const terrain_mod = @import("terrain.zig");
-const mesh_mod = @import("mesh.zig");
-pub const Mesh = mesh_mod.Mesh;
-const Vertex = mesh_mod.Vertex;
+const Terrain = @import("terrain.zig");
+pub const Mesh = @import("mesh.zig");
+const Vertex = Mesh.Vertex;
 const Camera = @import("camera.zig").Camera;
-const Chunk = terrain_mod.Chunk;
-const Terrain = terrain_mod.Terrain;
+const Chunk = Terrain.Chunk;
 const Shapes = @import("shapes.zig").Shapes;
 
 const input = @import("input.zig");
@@ -195,14 +193,14 @@ export fn init() void {
     };
 
     const terrain_size = za.Vec3_usize.new(12, 3, 12);
-    state.terrain = terrain_mod.Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
+    state.terrain = Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
     logStartupSection("terrain generation", &section_timer);
 
     state.building = BuildingState.init(gpa.allocator());
     state.camera.target_pos = Vec3.new(
-        @floatFromInt(terrain_size.x() * terrain_mod.CHUNK_SIZE / 2),
+        @floatFromInt(terrain_size.x() * Terrain.CHUNK_SIZE / 2),
         0.0,
-        @floatFromInt(terrain_size.z() * terrain_mod.CHUNK_SIZE / 2),
+        @floatFromInt(terrain_size.z() * Terrain.CHUNK_SIZE / 2),
     );
     logStartupSection("building camera init", &section_timer);
 
@@ -442,8 +440,8 @@ export fn frame() void {
         ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs | ig.ImGuiWindowFlags_AlwaysAutoResize,
     );
     ig.igText("%4.1f fps \t %4.1f ms", 1 / t, t * 1000);
-    ig.igText("chunk remesh avg: %.3f ms", terrain_mod.remesh_stats.average_ms());
-    ig.igText("last remesh total: %.3f ms", terrain_mod.remesh_stats.last_process_ms());
+    ig.igText("chunk remesh avg: %.3f ms", Terrain.remesh_stats.average_ms());
+    ig.igText("last remesh total: %.3f ms", Terrain.remesh_stats.last_process_ms());
     if (state.building.active) {
         const mesh = &state.building.mesh;
         ig.igText(

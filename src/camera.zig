@@ -11,11 +11,10 @@ const Quat = za.Quat;
 const sokol = @import("sokol");
 const sapp = sokol.app;
 
-const mesh_mod = @import("mesh.zig");
-const terrain_mod = @import("terrain.zig");
-const Ray = terrain_mod.Ray;
-const Terrain = terrain_mod.Terrain;
-const Transform = mesh_mod.Transform;
+const Mesh = @import("mesh.zig");
+const Terrain = @import("terrain.zig");
+const Ray = Terrain.Ray;
+const Transform = Mesh.Transform;
 const InputState = @import("input.zig").InputState;
 
 const MAX_PAN_SPEED: f32 = 100.0;

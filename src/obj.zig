@@ -1,12 +1,12 @@
 const std = @import("std");
 const za = @import("zalgebra");
 const Vec3 = za.Vec3;
-const lib = @import("mesh.zig");
+const Mesh = @import("mesh.zig");
 const resource = @import("resource.zig");
 
 const BUF_LEN = 1024;
 
-pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !lib.Mesh {
+pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !Mesh {
     const file = try resource.openFile(allocator, file_path, .{});
     defer file.close(std.Options.debug_io);
 
@@ -21,7 +21,7 @@ pub fn load_mesh_from_obj(allocator: std.mem.Allocator, file_path: []const u8) !
     var raw_normals: std.ArrayList(Vec3) = .empty;
     defer raw_normals.deinit(allocator);
 
-    var mesh = lib.Mesh{};
+    var mesh = Mesh{};
 
     while (true) {
         _ = reader.interface.streamDelimiter(&writer, '\n') catch |err| switch (err) {
@@ -50,7 +50,7 @@ fn processLine(
     line: []const u8,
     raw_positions: *std.ArrayList(Vec3),
     raw_normals: *std.ArrayList(Vec3),
-    mesh: *lib.Mesh,
+    mesh: *Mesh,
 ) !void {
     if (line.len == 0) return;
 
@@ -107,7 +107,7 @@ fn parseFace(
     data: []const u8,
     raw_positions: []const Vec3,
     raw_normals: []const Vec3,
-    mesh: *lib.Mesh,
+    mesh: *Mesh,
 ) !void {
     var face: [4]u16 = undefined;
     var count: usize = 0;

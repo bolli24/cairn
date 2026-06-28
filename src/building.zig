@@ -11,14 +11,12 @@ const sapp = sokol.app;
 
 const InputState = @import("input.zig").InputState;
 const Camera = @import("camera.zig").Camera;
-const terrain_mod = @import("terrain.zig");
-const Terrain = terrain_mod.Terrain;
-const Block = terrain_mod.Block;
+const Terrain = @import("terrain.zig");
+const Block = Terrain.Block;
 const Shapes = @import("shapes.zig").Shapes;
-const mesh_mod = @import("mesh.zig");
-const Mesh = mesh_mod.Mesh;
-const Vertex = mesh_mod.Vertex;
-const Transform = mesh_mod.Transform;
+const Mesh = @import("mesh.zig");
+const Vertex = Mesh.Vertex;
+const Transform = Mesh.Transform;
 
 const MARKER_COLOR = Vec4.new(1, 1, 0, 1);
 const LINE_COLOR = Vec4.new(0, 1, 1, 1);
@@ -267,12 +265,12 @@ pub const BuildingState = struct {
 pub const Shape = enum { circle, square };
 
 pub const EditPreview = struct {
-    const CS = terrain_mod.CHUNK_SIZE;
-    chunks: terrain_mod.ChunkOverlay,
+    const CS = Terrain.CHUNK_SIZE;
+    chunks: Terrain.Chunk.Overlay,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) @This() {
-        return .{ .chunks = terrain_mod.ChunkOverlay.init(allocator), .allocator = allocator };
+        return .{ .chunks = Terrain.Chunk.Overlay.init(allocator), .allocator = allocator };
     }
 
     pub fn deinit(self: *@This()) void {
@@ -294,7 +292,7 @@ pub const EditPreview = struct {
                 _ = self.chunks.remove(chunk_pos);
                 return;
             };
-            const overlay_blocks = self.allocator.create(terrain_mod.ChunkBlocks) catch return;
+            const overlay_blocks = self.allocator.create(Terrain.Chunk.Blocks) catch return;
             overlay_blocks.* = chunk._blocks;
             gop.value_ptr.* = overlay_blocks;
         }
@@ -396,7 +394,7 @@ pub const EditPreview = struct {
         const remesh_start = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
         defer {
             const remesh_end = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
-            terrain_mod.remesh_stats.record_process(@intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds()));
+            Terrain.remesh_stats.record_process(@intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds()));
         }
 
         var it = self.chunks.keyIterator();
