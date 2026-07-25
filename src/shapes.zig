@@ -14,14 +14,55 @@ pub const Shapes = struct {
     const AA_WIDTH = 0.02;
 
     camera: *const Camera,
-    pipeline: sg.Pipeline,
+    shader: sg.Shader = .{},
+    pipeline: sg.Pipeline = .{},
     vbuf: sg.Buffer = .{},
     ibuf: sg.Buffer = .{},
     allocator: std.mem.Allocator,
     vertices: std.ArrayList(Vertex) = .empty,
     indices: std.ArrayList(u16) = .empty,
 
-    pub fn deinit(self: *@This()) void {
+    pub fn init(camera: *const Camera, allocator: std.mem.Allocator) Self {
+        const shader = sg.makeShader(LineShader.basicShaderDesc(sg.queryBackend()));
+        var pipeline_desc = sg.PipelineDesc{
+            .shader = shader,
+            .index_type = .UINT16,
+            .cull_mode = .NONE,
+            .depth = .{
+                .write_enabled = true,
+                .compare = .LESS_EQUAL,
+            },
+            .label = "shapes-pipeline",
+        };
+        pipeline_desc.colors[0] = .{
+            .blend = .{
+                .enabled = true,
+                .src_factor_rgb = .SRC_ALPHA,
+                .dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+                .src_factor_alpha = .SRC_ALPHA,
+                .dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+            },
+        };
+        pipeline_desc.layout.buffers[0].stride = @sizeOf(Vertex);
+        pipeline_desc.layout.attrs[LineShader.ATTR_basic_position].format = .FLOAT3;
+        pipeline_desc.layout.attrs[LineShader.ATTR_basic_aUv].format = .FLOAT2;
+        pipeline_desc.layout.attrs[LineShader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
+        pipeline_desc.layout.attrs[LineShader.ATTR_basic_color0].format = .FLOAT4;
+        pipeline_desc.layout.attrs[LineShader.ATTR_basic_color0].offset = @offsetOf(Vertex, "color");
+
+        return .{
+            .camera = camera,
+            .shader = shader,
+            .pipeline = sg.makePipeline(pipeline_desc),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.vbuf.id != 0) sg.destroyBuffer(self.vbuf);
+        if (self.ibuf.id != 0) sg.destroyBuffer(self.ibuf);
+        if (self.pipeline.id != 0) sg.destroyPipeline(self.pipeline);
+        if (self.shader.id != 0) sg.destroyShader(self.shader);
         self.vertices.deinit(self.allocator);
         self.indices.deinit(self.allocator);
     }
@@ -64,6 +105,7 @@ pub const Shapes = struct {
             .aa_width = AA_WIDTH,
         };
 
+        sg.applyPipeline(self.pipeline);
         sg.applyBindings(bind);
         sg.applyUniforms(LineShader.UB_vs_params, sg.asRange(&vs_params));
         sg.applyUniforms(LineShader.UB_fs_params, sg.asRange(&fs_params));
@@ -76,6 +118,8 @@ pub const Shapes = struct {
     fn upload(self: *Self) void {
         if (self.vbuf.id != 0) sg.destroyBuffer(self.vbuf);
         if (self.ibuf.id != 0) sg.destroyBuffer(self.ibuf);
+        self.vbuf = .{};
+        self.ibuf = .{};
 
         self.vbuf = sg.makeBuffer(.{ .data = .{
             .ptr = self.vertices.items.ptr,

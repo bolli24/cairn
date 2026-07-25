@@ -1,6 +1,5 @@
 @header const za = @import("zalgebra")
 @ctype mat4 za.Mat4
-@ctype vec4 za.Vec4
 
 @vs vs
 layout(binding=0) uniform vs_params {
@@ -12,24 +11,16 @@ layout(binding=0) uniform vs_params {
 };
 
 in vec4 position;
-in vec2 aUv;
 in vec3 aNormal;
-in float ao;
 
 out vec3 normal;
-out vec2 uv;
-out vec4 frag_pos;
 out vec4 frag_pos_light_space;
-out float ao_level;
 
 void main() {
     vec4 world_pos = model * position;
     gl_Position = proj * view * world_pos;
     normal = mat3(normal_mat) * aNormal;
-    uv = aUv;
-    frag_pos = world_pos;
     frag_pos_light_space = light_space * world_pos;
-    ao_level = ao;
     #if !SOKOL_GLSL
     frag_pos_light_space.y = -frag_pos_light_space.y;
     #endif
@@ -42,23 +33,17 @@ layout(binding=1) uniform fs_params {
     vec3 ambient;
     vec3 light_color;
     vec3 light_dir;
-    float ao_strength;
     float brightness;
     float shadow_strength;
 };
 
-layout(binding=0) uniform texture2D color_map;
-layout(binding=0) uniform sampler color_smp;
 @image_sample_type shadow_map unfilterable_float
 @sampler_type shadow_smp nonfiltering
-layout(binding=1) uniform texture2D shadow_map;
-layout(binding=1) uniform sampler shadow_smp;
+layout(binding=0) uniform texture2D shadow_map;
+layout(binding=0) uniform sampler shadow_smp;
 
 in vec3 normal;
-in vec2 uv;
-in vec4 frag_pos;
 in vec4 frag_pos_light_space;
-in float ao_level;
 
 out vec3 frag_color;
 
@@ -97,20 +82,11 @@ float sample_shadow(vec4 light_space_pos, float bias) {
 
 void main() {
     vec3 n = normalize(normal);
-    vec3 geom_n = normalize(cross(dFdx(frag_pos.xyz), dFdy(frag_pos.xyz)));
-    if (dot(geom_n, n) < 0.0) geom_n = -geom_n;
-
-    vec3 axis_weight = abs(geom_n);
-    float y_brightness = geom_n.y > 0.0 ? 1.0 : 0.5;
-    float face_brightness = axis_weight.x * 0.8 + axis_weight.y * y_brightness + axis_weight.z * 0.6;
     float diff = max(dot(n, normalize(light_dir)), 0.0);
-    float geom_diff = max(dot(geom_n, normalize(light_dir)), 0.0);
-    float bias = max(0.00008 * (1.0 - geom_diff), 0.00005);
+    float bias = max(0.0008 * (1.0 - diff), 0.00005);
     float shadow = sample_shadow(frag_pos_light_space, bias) * shadow_strength;
-    vec4 color = texture(sampler2D(color_map, color_smp), uv) * vec4(base_color, 1.0);
     vec3 diffuse = diff * light_color * brightness;
-    vec3 result = (ambient + diffuse * (1.0 - shadow)) * color.rgb * face_brightness * mix(1.0, ao_level, ao_strength);
-    frag_color = result;
+    frag_color = (ambient + diffuse * (1.0 - shadow)) * base_color;
 }
 @end
 

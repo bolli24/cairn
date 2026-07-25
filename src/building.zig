@@ -39,6 +39,8 @@ const VERTEX_OFFSETS = [_]Vec3{
 };
 const VERTS_PER_SEGMENT: usize = VERTEX_OFFSETS.len;
 const FACES_PER_SEGMENT: usize = 2 * 4; // 2 faces per side
+const CAP_VERTS_PER_END: usize = 4;
+const CAP_VERTEX_COUNT: usize = CAP_VERTS_PER_END * 2;
 const CAP_INDEX_COUNT: usize = 2 * 3 * 2; // 2 triangles per cap, 2 caps
 
 pub const BuildingState = struct {
@@ -161,26 +163,25 @@ pub const BuildingState = struct {
 
                     const new_length = dir.length();
                     const segment_count: usize = @as(usize, @trunc(new_length / SEGMENT_LENGTH)) + 1;
-                    const vertex_count = (segment_count + 1) * VERTS_PER_SEGMENT;
+                    const side_vertex_count = (segment_count + 1) * VERTS_PER_SEGMENT;
+                    const vertex_count = side_vertex_count + CAP_VERTEX_COUNT;
                     const side_index_count = segment_count * FACES_PER_SEGMENT * 3;
                     const index_count = side_index_count + CAP_INDEX_COUNT;
 
                     if (self.mesh_segment_count > 0) {
+                        const current_side_vertex_count = (self.mesh_segment_count + 1) * VERTS_PER_SEGMENT;
                         const current_side_index_count = self.mesh_segment_count * FACES_PER_SEGMENT * 3;
+                        self.mesh.vertices.shrinkRetainingCapacity(current_side_vertex_count);
                         self.mesh.indices.shrinkRetainingCapacity(current_side_index_count);
                     }
 
                     if (self.mesh_segment_count > segment_count) {
-                        self.mesh.vertices.shrinkRetainingCapacity(vertex_count);
+                        self.mesh.vertices.shrinkRetainingCapacity(side_vertex_count);
                         self.mesh.indices.shrinkRetainingCapacity(side_index_count);
                     }
 
                     if (self.mesh_segment_count == 0) {
                         self.add_segment() catch return;
-
-                        inline for (VERTEX_OFFSETS, 0..) |value, i| {
-                            self.mesh.vertices.items[i] = .{ .pos = value }; // FIXME: normal
-                        }
                     }
 
                     const forward = dir.norm();
@@ -198,18 +199,49 @@ pub const BuildingState = struct {
                             const oriented_offset = right.scale(offset.x())
                                 .add(up.scale(offset.y()))
                                 .add(forward.scale(offset.z()));
+                            const normal = switch (j / 2) {
+                                0 => up.scale(-1),
+                                1 => right,
+                                2 => up,
+                                3 => right.scale(-1),
+                                else => unreachable,
+                            };
 
-                            self.mesh.vertices.items[i * VERTS_PER_SEGMENT + j] = .{ .pos = pos.add(oriented_offset) }; // FIXME: normal
+                            self.mesh.vertices.items[i * VERTS_PER_SEGMENT + j] = .{
+                                .pos = pos.add(oriented_offset),
+                                .normal = normal,
+                            };
                         }
                     }
 
-                    const start: u16 = 0;
-                    const end: u16 = @intCast(segment_count * VERTS_PER_SEGMENT);
+                    const end_side_vertex = segment_count * VERTS_PER_SEGMENT;
+                    const cap_side_vertices = [_]usize{ 0, 1, 3, 5 };
+                    var start_cap_positions: [CAP_VERTS_PER_END]Vec3 = undefined;
+                    var end_cap_positions: [CAP_VERTS_PER_END]Vec3 = undefined;
+                    inline for (cap_side_vertices, 0..) |side_vertex, i| {
+                        start_cap_positions[i] = self.mesh.vertices.items[side_vertex].pos;
+                        end_cap_positions[i] = self.mesh.vertices.items[end_side_vertex + side_vertex].pos;
+                    }
+
+                    const cap_vertices = self.mesh.vertices.addManyAsSlice(self.allocator, CAP_VERTEX_COUNT) catch return;
+                    inline for (0..CAP_VERTS_PER_END) |i| {
+                        cap_vertices[i] = .{
+                            .pos = start_cap_positions[i],
+                            .normal = forward.scale(-1),
+                        };
+                        cap_vertices[CAP_VERTS_PER_END + i] = .{
+                            .pos = end_cap_positions[i],
+                            .normal = forward,
+                        };
+                    }
+
+                    const start: u16 = @intCast(side_vertex_count);
+                    const end: u16 = start + @as(u16, CAP_VERTS_PER_END);
                     const cap_indices = [_]u16{
-                        start + 0, start + 3, start + 1,
-                        start + 0, start + 5, start + 3,
-                        end + 0,   end + 1,   end + 3,
-                        end + 0,   end + 3,   end + 5,
+                        start + 0, start + 2, start + 1,
+                        start + 0, start + 3, start + 2,
+                        end + 0,   end + 1,   end + 2,
+                        end + 0,   end + 2,   end + 3,
                     };
                     self.mesh.indices.appendSlice(self.allocator, &cap_indices) catch return;
 

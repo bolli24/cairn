@@ -34,6 +34,9 @@ transform: Transform = .{},
 color: Vec3 = Vec3.one().scale(0.5),
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    if (self.vbuf.id != 0) sg.destroyBuffer(self.vbuf);
+    if (self.ibuf.id != 0) sg.destroyBuffer(self.ibuf);
+    if (self.wireframe_ibuf.id != 0) sg.destroyBuffer(self.wireframe_ibuf);
     self.vertices.deinit(allocator);
     self.indices.deinit(allocator);
     self.wireframe_indices.deinit(allocator);
@@ -65,6 +68,9 @@ pub fn upload(self: *Self) void {
     if (self.vbuf.id != 0) sg.destroyBuffer(self.vbuf);
     if (self.ibuf.id != 0) sg.destroyBuffer(self.ibuf);
     if (self.wireframe_ibuf.id != 0) sg.destroyBuffer(self.wireframe_ibuf);
+    self.vbuf = .{};
+    self.ibuf = .{};
+    self.wireframe_ibuf = .{};
 
     if (self.vertices.items.len > 0) {
         self.vbuf = sg.makeBuffer(.{ .data = .{

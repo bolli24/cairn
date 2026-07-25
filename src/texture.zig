@@ -24,6 +24,14 @@ pub const GpuTexture = struct {
     image: sg.Image = .{},
     view: sg.View = .{},
     sampler: sg.Sampler = .{},
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        if (self.view.id != 0) sg.destroyView(self.view);
+        if (self.image.id != 0) sg.destroyImage(self.image);
+        if (self.sampler.id != 0) sg.destroySampler(self.sampler);
+        if (self.data.len != 0) allocator.free(self.data);
+        self.* = .{};
+    }
 };
 
 fn readU32(data: []const u8, offset: usize) !u32 {

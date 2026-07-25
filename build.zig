@@ -118,8 +118,11 @@ pub fn build(b: *std.Build) !void {
     // If neither case applies to you, feel free to delete the declaration you
     // don't need and to put everything under a single module.
 
-    var shader_module = try createShaderModule(b, dep_sokol, "src/shader.glsl");
-    shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
+    var terrain_shader_module = try createShaderModule(b, dep_sokol, "src/terrain.glsl");
+    terrain_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
+
+    var mesh_shader_module = try createShaderModule(b, dep_sokol, "src/mesh.glsl");
+    mesh_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
 
     var line_shader_module = try createShaderModule(b, dep_sokol, "src/line.glsl");
     line_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
@@ -167,8 +170,12 @@ pub fn build(b: *std.Build) !void {
                     .module = dep_zigimg.module("zigimg"),
                 },
                 .{
-                    .name = "shader",
-                    .module = shader_module,
+                    .name = "terrain_shader",
+                    .module = terrain_shader_module,
+                },
+                .{
+                    .name = "mesh_shader",
+                    .module = mesh_shader_module,
                 },
                 .{
                     .name = "line_shader",

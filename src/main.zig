@@ -1,12 +1,10 @@
 const std = @import("std");
-const math = @import("std").math;
 
 const za = @import("zalgebra");
 const Vec3 = za.Vec3;
 const Vec3_i32 = za.Vec3_i32;
 const Vec4 = za.Vec4;
 const Mat4 = za.Mat4;
-const Quat = za.Quat;
 
 const sokol = @import("sokol");
 const sg = sokol.gfx;
@@ -16,9 +14,6 @@ const simgui = sokol.imgui;
 const sgimgui = sokol.gfximgui;
 const saudio = sokol.audio;
 const slog = sokol.log;
-const shader = @import("shader");
-const line_shader = @import("line_shader");
-const shadow_shader = @import("shadow_shader");
 
 const use_docking = @import("build_options").docking;
 const ig = if (use_docking) @import("cimgui_docking") else @import("cimgui");
@@ -26,16 +21,14 @@ const ig = if (use_docking) @import("cimgui_docking") else @import("cimgui");
 const obj = @import("obj.zig");
 const Terrain = @import("terrain.zig");
 pub const Mesh = @import("mesh.zig");
-const Vertex = Mesh.Vertex;
 const Camera = @import("camera.zig").Camera;
-const Chunk = Terrain.Chunk;
 const Shapes = @import("shapes.zig").Shapes;
+const render = @import("render.zig");
 
 const input = @import("input.zig");
 const InputState = input.InputState;
 const BuildingState = @import("building.zig").BuildingState;
 const texture_mod = @import("texture.zig");
-const GpuTexture = texture_mod.GpuTexture;
 const TextureSource = texture_mod.TextureSource;
 
 const fastnoise = @import("fastnoise");
@@ -44,42 +37,25 @@ var gpa: std.heap.DebugAllocator(.{}) = .init;
 
 const SHADOW_MAP_SIZE: i32 = 4096;
 
-const Light = struct {
-    color: Vec3 = .new(1, 1, 1),
-    dir: Vec3 = Vec3.new(0.7, 0.6, 0.4).norm(),
-    ambient: Vec3 = .new(0.6, 0.6, 0.6),
-    brightness: f32 = 1.5,
-};
-
-const Shadow = struct {
-    depth_img: sg.Image = .{},
-    depth_view: sg.View = .{},
-    tex_view: sg.View = .{},
-    sampler: sg.Sampler = .{},
-    pip: sg.Pipeline = .{},
-    light_view_proj: Mat4 = Mat4.identity(),
-};
-
 const block_texture_source = TextureSource("p.png", .albedo);
 
 const State = struct {
     rx: f32 = 0.0,
     ry: f32 = 0.0,
-    pip: sg.Pipeline = .{},
-    pip_wireframe: sg.Pipeline = .{},
     wireframe: bool = false,
     meshes: std.ArrayList(Mesh) = .empty,
     terrain: Terrain = undefined,
     camera: Camera = .{},
     input: InputState = .{},
-    light: Light = .{},
+    light: render.LightParams = .{},
     show_light_rays: bool = false,
     shadows_enabled: bool = true,
     ambient_occlusion_enabled: bool = true,
     shapes: Shapes = undefined,
     building: BuildingState = undefined,
-    shadow: Shadow = .{},
-    texture: GpuTexture = .{},
+    terrain_renderer: render.TerrainRenderer = .{},
+    mesh_renderer: render.MeshRenderer = .{},
+    shadow_renderer: render.ShadowRenderer = .{},
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
@@ -89,7 +65,9 @@ const State = struct {
         self.terrain.deinit();
         self.building.deinit();
         self.shapes.deinit();
-        gpa.allocator().free(self.texture.data);
+        self.terrain_renderer.deinit(gpa.allocator());
+        self.mesh_renderer.deinit();
+        self.shadow_renderer.deinit();
     }
 
     fn add_mesh(self: *@This(), mesh: Mesh) !void {
@@ -149,35 +127,15 @@ export fn init() void {
 
     std.debug.print("Backend: {s}\n", .{@tagName(sg.queryBackend())});
 
-    // Shadow map resources
-    state.shadow.depth_img = sg.makeImage(.{
-        .usage = .{ .depth_stencil_attachment = true },
-        .width = SHADOW_MAP_SIZE,
-        .height = SHADOW_MAP_SIZE,
-        .pixel_format = .DEPTH,
-        .label = "shadow-depth-img",
-    });
-    state.shadow.depth_view = sg.makeView(.{
-        .depth_stencil_attachment = .{ .image = state.shadow.depth_img },
-        .label = "shadow-depth-att-view",
-    });
-    state.shadow.tex_view = sg.makeView(.{
-        .texture = .{ .image = state.shadow.depth_img },
-        .label = "shadow-tex-view",
-    });
-    state.shadow.sampler = sg.makeSampler(.{
-        .min_filter = .NEAREST,
-        .mag_filter = .NEAREST,
-        .wrap_u = .CLAMP_TO_EDGE,
-        .wrap_v = .CLAMP_TO_EDGE,
-        .label = "shadow-sampler",
-    });
+    state.shadow_renderer = render.ShadowRenderer.init(SHADOW_MAP_SIZE);
     logStartupSection("shadow resources", &section_timer);
 
-    state.texture = texture_mod.loadDdsTexture(gpa.allocator(), block_texture_source, .albedo) catch |err| {
+    const block_texture = texture_mod.loadDdsTexture(gpa.allocator(), block_texture_source, .albedo) catch |err| {
         std.debug.print("texture load failed: {s}\n", .{@errorName(err)});
         return;
     };
+    state.terrain_renderer = render.TerrainRenderer.init(block_texture);
+    state.mesh_renderer = render.MeshRenderer.init();
     logStartupSection("texture load", &section_timer);
 
     const noise = fastnoise.Noise(f32){
@@ -212,94 +170,8 @@ export fn init() void {
     state.add_mesh(suzanne) catch return;
     logStartupSection("obj upload", &section_timer);
 
-    // Shadow pipeline
-    const shadow_shd = sg.makeShader(shadow_shader.shadowShaderDesc(sg.queryBackend()));
-    var shadow_pip_desc = sg.PipelineDesc{
-        .shader = shadow_shd,
-        .index_type = .UINT16,
-        .cull_mode = .BACK,
-        .face_winding = .CCW,
-        .depth = .{
-            .write_enabled = true,
-            .compare = .LESS_EQUAL,
-            .pixel_format = .DEPTH,
-            .bias = 2.5,
-            .bias_slope_scale = 2.5,
-        },
-        .label = "shadow-pipeline",
-    };
-    shadow_pip_desc.colors[0].pixel_format = .NONE;
-    shadow_pip_desc.layout.buffers[0].stride = @sizeOf(Vertex);
-    shadow_pip_desc.layout.attrs[shadow_shader.ATTR_shadow_position].format = .FLOAT3;
-    state.shadow.pip = sg.makePipeline(shadow_pip_desc);
-
-    const shd = sg.makeShader(shader.basicShaderDesc(sg.queryBackend()));
-
-    var pip_desc = sg.PipelineDesc{
-        .shader = shd,
-        .index_type = .UINT16,
-        .cull_mode = .BACK,
-        .face_winding = .CCW,
-        .depth = .{
-            .write_enabled = true,
-            .compare = .LESS_EQUAL,
-        },
-        .label = "basic-pipeline",
-    };
-
-    pip_desc.layout.buffers[0].stride = @sizeOf(Vertex);
-    pip_desc.layout.attrs[shader.ATTR_basic_position].format = .FLOAT3;
-    pip_desc.layout.attrs[shader.ATTR_basic_aNormal].format = .FLOAT3;
-    pip_desc.layout.attrs[shader.ATTR_basic_aNormal].offset = @offsetOf(Vertex, "normal");
-    pip_desc.layout.attrs[shader.ATTR_basic_aUv].format = .FLOAT2;
-    pip_desc.layout.attrs[shader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
-    pip_desc.layout.attrs[shader.ATTR_basic_ao].format = .FLOAT;
-    pip_desc.layout.attrs[shader.ATTR_basic_ao].offset = @offsetOf(Vertex, "ao");
-
-    state.pip = sg.makePipeline(pip_desc);
-
-    pip_desc.primitive_type = .LINES;
-    pip_desc.label = "wireframe-pipeline";
-
-    state.pip_wireframe = sg.makePipeline(pip_desc);
-    logStartupSection("mesh pipelines", &section_timer);
-
-    const line_shd = sg.makeShader(line_shader.basicShaderDesc(sg.queryBackend()));
-    var line_pip_desc = sg.PipelineDesc{
-        .shader = line_shd,
-        .index_type = .UINT16,
-        .cull_mode = .NONE,
-        .depth = .{
-            .write_enabled = true,
-            .compare = .LESS_EQUAL,
-        },
-        .label = "shapes-pipeline",
-    };
-    line_pip_desc.colors[0] = .{
-        .blend = .{
-            .enabled = true,
-            .src_factor_rgb = .SRC_ALPHA,
-            .dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
-            .src_factor_alpha = .SRC_ALPHA,
-            .dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
-        },
-    };
-    line_pip_desc.layout.buffers[0].stride = @sizeOf(Vertex);
-    line_pip_desc.layout.attrs[line_shader.ATTR_basic_position].format = .FLOAT3;
-    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aUv].format = .FLOAT2;
-    line_pip_desc.layout.attrs[line_shader.ATTR_basic_aUv].offset = @offsetOf(Vertex, "uv");
-    line_pip_desc.layout.attrs[line_shader.ATTR_basic_color0].format = .FLOAT4;
-    line_pip_desc.layout.attrs[line_shader.ATTR_basic_color0].offset = @offsetOf(Vertex, "color");
-
-    state.shapes = .{
-        .camera = &state.camera,
-        .pipeline = sg.makePipeline(line_pip_desc),
-        .allocator = gpa.allocator(),
-    };
+    state.shapes = Shapes.init(&state.camera, gpa.allocator());
     logStartupSection("shape pipeline", &section_timer);
-
-    state.shadow.light_view_proj = compute_light_view_proj();
-    logStartupSection("light view proj", &section_timer);
 
     const total_ms = @as(f64, @floatFromInt(startup_timer.read())) / @as(f64, @floatFromInt(std.time.ns_per_ms));
     std.debug.print("startup total: {d:.2} ms\n", .{total_ms});
@@ -352,18 +224,21 @@ export fn frame() void {
     // Shadow pass
     var shadow_pass = sg.Pass{};
     shadow_pass.action.depth = .{ .load_action = .CLEAR, .clear_value = 1.0 };
-    shadow_pass.attachments.depth_stencil = state.shadow.depth_view;
+    shadow_pass.attachments.depth_stencil = state.shadow_renderer.depthAttachment();
 
     sg.beginPass(shadow_pass);
-    sg.applyPipeline(state.shadow.pip);
+    state.shadow_renderer.begin(compute_light_view_proj());
 
     var chunk_it = state.terrain.chunks.valueIterator();
     while (chunk_it.next()) |chunk_ptr| {
         if (chunk_ptr.mesh.vertices.items.len == 0) continue;
-        submit_shadow_mesh(&chunk_ptr.*.mesh);
+        state.shadow_renderer.draw(&chunk_ptr.mesh, model_matrix(&chunk_ptr.mesh));
     }
     for (state.meshes.items) |*mesh| {
-        submit_shadow_mesh(mesh);
+        state.shadow_renderer.draw(mesh, model_matrix(mesh));
+    }
+    if (state.building.active and state.building.mesh_segment_count > 0) {
+        state.shadow_renderer.draw(&state.building.mesh, model_matrix(&state.building.mesh));
     }
     sg.endPass();
 
@@ -376,20 +251,45 @@ export fn frame() void {
     pass.action.depth = .{ .load_action = .CLEAR, .clear_value = 1.0 };
 
     sg.beginPass(pass);
-    sg.applyPipeline(if (state.wireframe) state.pip_wireframe else state.pip);
+    const frame_params = render.FrameParams{
+        .view = state.camera.viewMatrix(),
+        .projection = state.camera.projectionMatrix(),
+        .light = state.light,
+        .shadows_enabled = state.shadows_enabled,
+        .ambient_occlusion_enabled = state.ambient_occlusion_enabled,
+    };
+    const shadow_map = state.shadow_renderer.shadowMap();
 
     chunk_it = state.terrain.chunks.valueIterator();
     while (chunk_it.next()) |chunk_ptr| {
         if (chunk_ptr.mesh.vertices.items.len == 0) continue;
-        submit_mesh(&chunk_ptr.*.mesh);
+        state.terrain_renderer.draw(
+            &chunk_ptr.mesh,
+            model_matrix(&chunk_ptr.mesh),
+            frame_params,
+            shadow_map,
+            state.wireframe,
+        );
     }
 
     for (state.meshes.items) |*mesh| {
-        submit_mesh(mesh);
+        state.mesh_renderer.draw(
+            mesh,
+            model_matrix(mesh),
+            frame_params,
+            shadow_map,
+            state.wireframe,
+        );
     }
 
     if (state.building.active and state.building.mesh_segment_count > 0) {
-        submit_mesh(&state.building.mesh);
+        state.mesh_renderer.draw(
+            &state.building.mesh,
+            model_matrix(&state.building.mesh),
+            frame_params,
+            shadow_map,
+            state.wireframe,
+        );
     }
 
     // Test lines
@@ -418,7 +318,6 @@ export fn frame() void {
         }
     }
 
-    sg.applyPipeline(state.shapes.pipeline);
     state.shapes.draw_all();
 
     sg.endPass();
@@ -466,34 +365,6 @@ export fn frame() void {
     // std.debug.print("cpu: {d:.1}us ({d:.2}ms)\n", .{ @as(f64, @floatFromInt(cpu_us)), @as(f64, @floatFromInt(cpu_us)) / 1000.0 });
 }
 
-fn submit_mesh(mesh: *const Mesh) void {
-    const use_wireframe = state.wireframe and mesh.wireframe_ibuf.id != 0;
-
-    var bind: sg.Bindings = .{};
-    bind.vertex_buffers[0] = mesh.vbuf;
-    bind.index_buffer = if (use_wireframe) mesh.wireframe_ibuf else mesh.ibuf;
-    bind.views[shader.VIEW_color_map] = state.texture.view;
-    bind.samplers[shader.SMP_color_smp] = state.texture.sampler;
-    bind.views[shader.VIEW_shadow_map] = state.shadow.tex_view;
-    bind.samplers[shader.SMP_shadow_smp] = state.shadow.sampler;
-    const vs_params = compute_vsparams(state.rx, state.ry, mesh, &state.camera);
-    const fs_params = shader.FsParams{
-        .base_color = mesh.color.toArray(),
-        .ambient = state.light.ambient.toArray(),
-        .light_color = state.light.color.toArray(),
-        .light_dir = state.light.dir.toArray(),
-        .ao_strength = if (state.ambient_occlusion_enabled) 0.6 else 0.0,
-        .brightness = state.light.brightness,
-        .shadow_strength = if (state.shadows_enabled) 1.0 else 0.0,
-    };
-
-    sg.applyBindings(bind);
-    sg.applyUniforms(shader.UB_vs_params, sg.asRange(&vs_params));
-    sg.applyUniforms(shader.UB_fs_params, sg.asRange(&fs_params));
-    const num_indices = if (use_wireframe) mesh.wireframe_indices.items.len else mesh.indices.items.len;
-    sg.draw(0, @intCast(num_indices), 1);
-}
-
 export fn event_handler(maybe_event: [*c]const sapp.Event) void {
     const event = maybe_event.*;
     state.input.handle_event(event);
@@ -527,18 +398,9 @@ test {
     _ = @import("obj.zig");
 }
 
-fn compute_vsparams(rx: f32, ry: f32, mesh: *const Mesh, camera: *const Camera) shader.VsParams {
-    const proj = camera.projectionMatrix();
-    const view = camera.viewMatrix();
-    const model = Mat4.fromTranslate(mesh.transform.position).mul(Mat4.fromEulerAngles(Vec3.new(rx, ry, 0)));
-
-    return .{
-        .model = model,
-        .view = view,
-        .proj = proj,
-        .normal_mat = model.inv().transpose(),
-        .light_space = state.shadow.light_view_proj,
-    };
+fn model_matrix(mesh: *const Mesh) Mat4 {
+    return Mat4.fromTranslate(mesh.transform.position)
+        .mul(Mat4.fromEulerAngles(Vec3.new(state.rx, state.ry, 0)));
 }
 
 fn compute_light_view_proj() Mat4 {
@@ -548,18 +410,4 @@ fn compute_light_view_proj() Mat4 {
     const light_view = Mat4.lookAt(light_eye, scene_center, Vec3.new(0.0, 1.0, 0.0));
     const light_proj = Mat4.orthographic(-150.0, 150.0, -150.0, 150.0, 0.1, 600.0);
     return light_proj.mul(light_view);
-}
-
-fn submit_shadow_mesh(mesh: *const Mesh) void {
-    var bind: sg.Bindings = .{};
-    bind.vertex_buffers[0] = mesh.vbuf;
-    bind.index_buffer = mesh.ibuf;
-
-    const model = Mat4.fromTranslate(mesh.transform.position)
-        .mul(Mat4.fromEulerAngles(Vec3.new(state.rx, state.ry, 0)));
-    const vs_params = shadow_shader.VsParams{ .mvp = state.shadow.light_view_proj.mul(model) };
-
-    sg.applyBindings(bind);
-    sg.applyUniforms(shadow_shader.UB_vs_params, sg.asRange(&vs_params));
-    sg.draw(0, @intCast(mesh.indices.items.len), 1);
 }
