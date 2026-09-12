@@ -33,7 +33,10 @@ const TextureSource = texture_mod.TextureSource;
 
 const fastnoise = @import("fastnoise");
 
-var gpa: std.heap.DebugAllocator(.{}) = .init;
+var gpa: std.heap.DebugAllocator(.{ .thread_safe = true, .stack_trace_frames = 12 }) = .init;
+// var thread_gpa: std.heap.DebugAllocator(.{ .thread_safe = true }) = .init;
+
+var mesh_workers: std.Io.Threaded = undefined;
 
 const SHADOW_MAP_SIZE: i32 = 4096;
 
@@ -138,6 +141,9 @@ export fn init() void {
     state.mesh_renderer = render.MeshRenderer.init();
     logStartupSection("texture load", &section_timer);
 
+    mesh_workers = .init(gpa.allocator(), .{});
+    std.debug.print("Mesh worker threads: {d}\n", .{mesh_workers.async_limit.toInt() orelse 0});
+
     const noise = fastnoise.Noise(f32){
         .seed = 1337,
         .noise_type = .simplex_smooth,
@@ -154,7 +160,7 @@ export fn init() void {
     state.terrain = Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
     logStartupSection("terrain generation", &section_timer);
 
-    state.terrain.remesh_all();
+    state.terrain.remesh_all(mesh_workers.io()) catch return;
     logStartupSection("terrain meshing", &section_timer);
 
     state.building = BuildingState.init(gpa.allocator());
@@ -220,9 +226,11 @@ export fn frame() void {
 
     if (!state.building.active and state.input.mouse_pressed(.LEFT)) {
         if (state.terrain.raycast(state.camera.screen_to_ray(state.input.mouse_pos, 500))) |hit| {
-            state.terrain.set_block(hit.previous, .ground, true);
+            state.terrain.set_block(hit.previous, .ground) catch return;
         }
     }
+
+    state.terrain.remesh_dirty(mesh_workers.io()) catch return;
 
     // Shadow pass
     var shadow_pass = sg.Pass{};
@@ -343,7 +351,7 @@ export fn frame() void {
     );
     ig.igText("%4.1f fps \t %4.1f ms", 1 / t, t * 1000);
     ig.igText("chunk remesh avg: %.3f ms", Terrain.remesh_stats.average_ms());
-    ig.igText("last remesh total: %.3f ms", Terrain.remesh_stats.last_process_ms());
+    ig.igText("last remesh total: %.3f ms (%d chunks)", Terrain.remesh_stats.last_process_ms(), Terrain.remesh_stats.last_process_chunks);
     if (state.building.active) {
         const mesh = &state.building.mesh;
         ig.igText(
@@ -376,7 +384,9 @@ export fn event_handler(maybe_event: [*c]const sapp.Event) void {
 }
 
 export fn cleanup() void {
+    mesh_workers.deinit();
     state.deinit();
+
     const check = gpa.deinit();
     if (check == .leak) {
         @panic("memory leak detected");

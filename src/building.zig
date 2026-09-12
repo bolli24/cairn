@@ -101,21 +101,25 @@ pub const BuildingState = struct {
 
     pub fn update(self: *Self, input: *InputState, camera: *const Camera, terrain: *Terrain, shapes: *Shapes) void {
         if (input.key_pressed(.B)) {
-            self.active = !self.active;
             if (self.active) {
-                self.reset();
-            } else {
-                self.revert_preview(terrain);
-                self.reset();
+                self.revert_preview(terrain) catch |err| {
+                    std.debug.print("ERROR: Could not hide preview: {s}\n", .{@errorName(err)});
+                    return;
+                };
             }
+            self.active = !self.active;
+            self.reset();
             return;
         }
 
         if (!self.active) return;
 
         if (input.key_pressed(.ESCAPE)) {
+            self.revert_preview(terrain) catch |err| {
+                std.debug.print("ERROR: Could not hide preview: {s}\n", .{@errorName(err)});
+                return;
+            };
             self.active = false;
-            self.revert_preview(terrain);
             self.reset();
             return;
         }
@@ -147,10 +151,14 @@ pub const BuildingState = struct {
 
                 if (self.prev_hit == null or !self.prev_hit.?.eql(h.pos)) {
                     if (self.preview_active) {
-                        self.preview.hide(terrain);
+                        self.preview.hide(terrain) catch |err| {
+                            std.debug.print("ERROR: Could not hide preview: {s}\n", .{@errorName(err)});
+                            return;
+                        };
+                        self.preview_active = false;
                     }
                     self.preview.clear();
-                    self.prev_hit = h.pos;
+                    self.prev_hit = null;
                     const p1 = self.pos1.?.add(Vec3_i32.new(0, 3, 0));
                     const p2 = h.pos.add(Vec3_i32.new(0, 3, 0));
                     const p1f = p1.cast(f32);
@@ -158,8 +166,12 @@ pub const BuildingState = struct {
                     const dir = p2f.sub(p1f);
 
                     self.preview.add_block_path(terrain, p1, p2, 3.9, .air, .circle);
-                    self.preview.show(terrain);
+                    self.preview.show(terrain) catch |err| {
+                        std.debug.print("ERROR: Could not show preview: {s}\n", .{@errorName(err)});
+                        return;
+                    };
                     self.preview_active = true;
+                    self.prev_hit = h.pos;
 
                     const new_length = dir.length();
                     const segment_count: usize = @as(usize, @trunc(new_length / SEGMENT_LENGTH)) + 1;
@@ -268,7 +280,10 @@ pub const BuildingState = struct {
             shapes.line_3d(p1f.add(Vec3.new(0.5, 0.5, 0.5)), p2f.add(Vec3.new(0.5, 0.5, 0.5)), CONFIRM_COLOR, LINE_THICKNESS);
 
             if (input.key_pressed(.SPACE)) {
-                self.preview.commit(terrain);
+                self.preview.commit(terrain) catch |err| {
+                    std.debug.print("ERROR: Could not commit preview: {s}\n", .{@errorName(err)});
+                    return;
+                };
                 self.preview.clear();
                 self.preview_active = false;
                 self.reset();
@@ -285,9 +300,9 @@ pub const BuildingState = struct {
         self.mesh_segment_count = 0;
     }
 
-    fn revert_preview(self: *Self, terrain: *Terrain) void {
+    fn revert_preview(self: *Self, terrain: *Terrain) !void {
         if (self.preview_active) {
-            self.preview.hide(terrain);
+            try self.preview.hide(terrain);
             self.preview.clear();
             self.preview_active = false;
         }
@@ -394,26 +409,27 @@ pub const EditPreview = struct {
     }
 
     /// Set the overlay on terrain and remesh affected chunks.
-    pub fn show(self: *@This(), terrain: *Terrain) void {
+    pub fn show(self: *@This(), terrain: *Terrain) !void {
+        try self.dirty_affected(terrain);
         terrain.overlay = &self.chunks;
-        self.remesh_affected(terrain);
     }
 
     /// Remove the overlay and remesh to restore original appearance.
-    pub fn hide(self: *@This(), terrain: *Terrain) void {
+    pub fn hide(self: *@This(), terrain: *Terrain) !void {
+        try self.dirty_affected(terrain);
         terrain.overlay = null;
-        self.remesh_affected(terrain);
     }
 
     /// Write edits permanently into terrain data and remesh (no overlay needed after).
-    pub fn commit(self: *@This(), terrain: *Terrain) void {
+    pub fn commit(self: *@This(), terrain: *Terrain) !void {
+        try self.dirty_affected(terrain);
+
         terrain.overlay = null;
         var it = self.chunks.iterator();
         while (it.next()) |entry| {
             const chunk = terrain.chunks.getPtr(entry.key_ptr.*) orelse continue;
             chunk._blocks = entry.value_ptr.*.*;
         }
-        self.remesh_affected(terrain);
     }
 
     pub fn clear(self: *@This()) void {
@@ -422,20 +438,12 @@ pub const EditPreview = struct {
         self.chunks.clearRetainingCapacity();
     }
 
-    fn remesh_affected(self: *@This(), terrain: *Terrain) void {
-        const remesh_start = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
-        defer {
-            const remesh_end = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
-            Terrain.remesh_stats.record_process(@intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds()));
-        }
+    fn dirty_affected(self: *@This(), terrain: *Terrain) !void {
+        try terrain.dirty_chunks.ensureUnusedCapacity(self.chunks.count());
 
         var it = self.chunks.keyIterator();
         while (it.next()) |chunk_pos| {
-            terrain.remesh_at(Vec3_i32.new(
-                chunk_pos.x() * CS,
-                chunk_pos.y() * CS,
-                chunk_pos.z() * CS,
-            ));
+            terrain.dirty_chunks.putAssumeCapacity(chunk_pos.*, {});
         }
     }
 };

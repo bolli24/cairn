@@ -29,6 +29,7 @@ pub var remesh_stats: RemeshStats = .{};
 
 const Self = @This();
 chunks: std.AutoHashMap(Vec3_i32, Chunk),
+dirty_chunks: std.AutoHashMap(Vec3_i32, void),
 allocator: std.mem.Allocator,
 overlay: ?*const Overlay = null,
 
@@ -77,7 +78,8 @@ pub fn generate_with_noise(allocator: std.mem.Allocator, noise: fastnoise.Noise(
 
 pub fn init(allocator: std.mem.Allocator) Self {
     return .{
-        .chunks = std.AutoHashMap(Vec3_i32, Chunk).init(allocator),
+        .chunks = .init(allocator),
+        .dirty_chunks = .init(allocator),
         .allocator = allocator,
     };
 }
@@ -88,12 +90,66 @@ pub fn deinit(self: *Self) void {
         chunk_ptr.deinit(self.allocator);
     }
     self.chunks.deinit();
+    self.dirty_chunks.deinit();
 }
 
-pub fn remesh_all(self: *Self) void {
-    var it = self.chunks.valueIterator();
-    while (it.next()) |chunk_ptr| {
-        chunk_ptr.update_mesh_with_overlay(self.allocator, self, null);
+pub fn remesh_all(self: *Self, io: std.Io) !void {
+    var jobs = try self.collect_mesh_jobs(self.chunks.keyIterator(), self.chunks.count());
+    defer jobs.deinit(self.allocator);
+
+    try self.remesh_batch(io, jobs.items);
+}
+
+pub fn remesh_dirty(self: *Self, io: std.Io) !void {
+    var jobs = try self.collect_mesh_jobs(self.dirty_chunks.keyIterator(), self.dirty_chunks.count());
+    defer jobs.deinit(self.allocator);
+
+    try self.remesh_batch(io, jobs.items);
+    self.dirty_chunks.clearRetainingCapacity();
+}
+
+pub fn collect_mesh_jobs(self: *Self, keys: anytype, count: usize) !std.ArrayList(MeshJob) {
+    var jobs: std.ArrayList(MeshJob) = try .initCapacity(self.allocator, count);
+
+    var it = keys;
+    while (it.next()) |pos| {
+        jobs.appendAssumeCapacity(.{
+            .chunk = self.chunks.getPtr(pos.*) orelse continue,
+        });
+    }
+
+    return jobs;
+}
+
+pub fn remesh_batch(self: *const Self, io: std.Io, jobs: []MeshJob) !void {
+    const remesh_start = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+    defer {
+        if (jobs.len > 0) {
+            const remesh_end = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+            Self.remesh_stats.record_process(@intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds()), jobs.len);
+        }
+    }
+
+    var group: std.Io.Group = .init;
+    for (jobs) |*job| {
+        job.failure = null;
+        group.async(io, build_mesh_job, .{
+            self,
+            job,
+            self.allocator,
+            self.overlay,
+        });
+    }
+
+    try group.await(io);
+
+    for (jobs) |job| {
+        if (job.failure) |err| return err;
+    }
+
+    for (jobs) |job| {
+        job.chunk.mesh.upload();
+        Self.remesh_stats.record(job.time);
     }
 }
 
@@ -125,21 +181,20 @@ pub fn world_to_local_pos(world_pos: Vec3_i32) Vec3_i32 {
 }
 
 pub fn get_block(self: *const Self, world_pos: Vec3_i32) Block {
-    const chunk = self.chunks.get(world_to_chunk_pos(world_pos)) orelse return .air;
+    const chunk = self.chunks.getPtr(world_to_chunk_pos(world_pos)) orelse return .air;
     return chunk.get_block(world_to_local_pos(world_pos));
 }
 
-pub fn set_block(self: *Self, world_pos: Vec3_i32, block: Block, remesh: bool) void {
-    const chunk = self.chunks.getPtr(world_to_chunk_pos(world_pos)) orelse return;
+pub fn set_block(self: *Self, world_pos: Vec3_i32, block: Block) !void {
+    const pos = world_to_chunk_pos(world_pos);
+    const chunk = self.chunks.getPtr(pos) orelse return;
     const local = world_to_local_pos(world_pos);
     chunk._blocks[@intCast(local.x())][@intCast(local.y())][@intCast(local.z())] = block;
 
-    if (remesh) {
-        chunk.update_mesh_with_overlay(self.allocator, self, null);
-    }
+    try self.dirty_chunks.put(pos, {});
 }
 
-pub fn set_blocks(self: *Self, allocator: std.mem.Allocator, box: BoxI, block: Block, remesh: bool) void {
+pub fn set_blocks(self: *Self, box: BoxI, block: Block) !void {
     const min_chunk = world_to_chunk_pos(box.min);
     const max_chunk = world_to_chunk_pos(Vec3_i32.new(box.max.x() - 1, box.max.y() - 1, box.max.z() - 1));
 
@@ -149,7 +204,8 @@ pub fn set_blocks(self: *Self, allocator: std.mem.Allocator, box: BoxI, block: B
         while (cy <= max_chunk.y()) : (cy += 1) {
             var cz = min_chunk.z();
             while (cz <= max_chunk.z()) : (cz += 1) {
-                const chunk = self.chunks.getPtr(Vec3_i32.new(cx, cy, cz)) orelse continue;
+                const pos = Vec3_i32.new(cx, cy, cz);
+                const chunk = self.chunks.getPtr(pos) orelse continue;
 
                 // Clamp box to this chunk's local bounds
                 const chunk_world_x = cx * CHUNK_SIZE;
@@ -171,9 +227,7 @@ pub fn set_blocks(self: *Self, allocator: std.mem.Allocator, box: BoxI, block: B
                     }
                 }
 
-                if (remesh) {
-                    chunk.update_mesh_with_overlay(allocator, self, null);
-                }
+                try self.dirty_chunks.put(pos, {});
             }
         }
     }
@@ -183,6 +237,24 @@ pub fn set_blocks(self: *Self, allocator: std.mem.Allocator, box: BoxI, block: B
 pub fn remesh_at(self: *Self, world_pos: Vec3_i32) void {
     const chunk = self.chunks.getPtr(world_to_chunk_pos(world_pos)) orelse return;
     chunk.update_mesh_with_overlay(self.allocator, self, self.overlay);
+}
+
+const MeshJob = struct {
+    chunk: *Chunk,
+    failure: ?std.mem.Allocator.Error = null,
+    time: u64 = 0,
+};
+
+fn build_mesh_job(self: *const Self, job: *MeshJob, allocator: std.mem.Allocator, overlay: ?*const Overlay) void {
+    const remesh_start = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+    defer {
+        const remesh_end = std.Io.Clock.Timestamp.now(std.Options.debug_io, .awake);
+        job.time = @intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds());
+    }
+
+    job.chunk.build_mesh(allocator, self, overlay) catch |err| {
+        job.failure = err;
+    };
 }
 
 pub fn raycast(self: *const Self, ray: Ray) ?RaycastHit {
@@ -296,12 +368,13 @@ pub fn raycast(self: *const Self, ray: Ray) ?RaycastHit {
 }
 
 pub const RemeshStats = struct {
-    const SAMPLE_COUNT = 10;
+    const SAMPLE_COUNT = 20;
 
     samples: [SAMPLE_COUNT]u64 = [_]u64{0} ** SAMPLE_COUNT,
     next: usize = 0,
     count: usize = 0,
     last_process_nanos: u64 = 0,
+    last_process_chunks: usize = 0,
 
     pub fn record(self: *@This(), nanos: u64) void {
         self.samples[self.next] = nanos;
@@ -320,8 +393,9 @@ pub const RemeshStats = struct {
         return @as(f64, @floatFromInt(total)) / @as(f64, @floatFromInt(self.count)) / @as(f64, @floatFromInt(std.time.ns_per_ms));
     }
 
-    pub fn record_process(self: *@This(), nanos: u64) void {
+    pub fn record_process(self: *@This(), nanos: u64, chunk_count: usize) void {
         self.last_process_nanos = nanos;
+        self.last_process_chunks = chunk_count;
     }
 
     pub fn last_process_ms(self: *const @This()) f64 {
@@ -338,10 +412,10 @@ test "set_blocks within single chunk" {
     terrain.chunks.put(Vec3_i32.new(0, 0, 0), Chunk{ .pos = Vec3_i32.new(0, 0, 0) }) catch unreachable;
 
     // Fill a 3x4x5 box
-    terrain.set_blocks(allocator, .{
+    try terrain.set_blocks(.{
         .min = Vec3_i32.new(2, 3, 4),
         .max = Vec3_i32.new(5, 7, 9),
-    }, .ground, false);
+    }, .ground);
 
     // Blocks inside the box should be ground
     for (2..5) |x| {
@@ -374,10 +448,10 @@ test "set_blocks spanning multiple chunks" {
     }
 
     // Fill a box that spans from chunk (0,0,0) into chunk (1,1,1)
-    terrain.set_blocks(allocator, .{
+    try terrain.set_blocks(.{
         .min = Vec3_i32.new(14, 14, 14),
         .max = Vec3_i32.new(18, 18, 18),
-    }, .ground, false);
+    }, .ground);
 
     // Verify blocks in chunk (0,0,0) — local (14,14,14) to (15,15,15)
     for (14..16) |x| {
@@ -411,10 +485,10 @@ test "set_blocks skips missing chunks" {
     terrain.chunks.put(Vec3_i32.new(0, 0, 0), Chunk{ .pos = Vec3_i32.new(0, 0, 0) }) catch unreachable;
 
     // Box spans into chunk (1,0,0) which doesn't exist
-    terrain.set_blocks(allocator, .{
+    try terrain.set_blocks(.{
         .min = Vec3_i32.new(14, 0, 0),
         .max = Vec3_i32.new(18, 2, 2),
-    }, .ground, false);
+    }, .ground);
 
     // Blocks in existing chunk should be set
     try std.testing.expectEqual(Block.ground, terrain.get_block(Vec3_i32.new(14, 0, 0)));

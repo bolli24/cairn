@@ -11,6 +11,7 @@ const CHUNK_SIZE = Terrain.CHUNK_SIZE;
 const Block = Terrain.Block;
 const RemeshStats = Terrain.RemeshStats;
 const BoxI = Terrain.BoxI;
+const MeshJob = Terrain.Chunk.Job;
 
 pub const Blocks = [CHUNK_SIZE][CHUNK_SIZE][CHUNK_SIZE]Block;
 pub const Overlay = std.AutoHashMap(Vec3_i32, *Blocks);
@@ -261,6 +262,12 @@ pub fn update_mesh_with_overlay(
         Terrain.remesh_stats.record(@intCast(remesh_start.durationTo(remesh_end).raw.toNanoseconds()));
     }
 
+    self.build_mesh(allocator, terrain, overlay) catch return;
+    self.mesh.upload();
+}
+
+// TODO: maybe make terrain not an optional pointer
+pub fn build_mesh(self: *Self, allocator: std.mem.Allocator, terrain: ?*const Terrain, overlay: ?*const Overlay) std.mem.Allocator.Error!void {
     self.mesh.vertices.clearRetainingCapacity();
     self.mesh.indices.clearRetainingCapacity();
     self.mesh.wireframe_indices.clearRetainingCapacity();
@@ -311,21 +318,21 @@ pub fn update_mesh_with_overlay(
                     var ao_vals: [4]f32 = undefined;
                     for (face.verts, 0..) |v, vert_i| {
                         ao_vals[vert_i] = vertex_ao(vert_i, x, y, z, face, blocks, terrain, overlay, chunk_origin);
-                        self.mesh.vertices.append(allocator, .{
+                        try self.mesh.vertices.append(allocator, .{
                             .pos = za.Vec3.new(v[0] + fx, v[1] + fy, v[2] + fz),
                             .normal = normal,
                             .uv = za.Vec2.new(face_uvs[vert_i][0], face_uvs[vert_i][1]),
                             .ao = ao_vals[vert_i],
-                        }) catch return;
+                        });
                     }
 
                     // Flip diagonal to avoid AO interpolation artifacts:
                     // default diagonal is 0-2; flip to 1-3 when it has greater total AO.
                     const flip = ao_vals[0] + ao_vals[2] > ao_vals[1] + ao_vals[3];
                     if (!flip) {
-                        self.mesh.indices.appendSlice(allocator, &.{ base + 1, base + 2, base + 3, base + 1, base + 3, base }) catch return;
+                        try self.mesh.indices.appendSlice(allocator, &.{ base + 1, base + 2, base + 3, base + 1, base + 3, base });
                     } else {
-                        self.mesh.indices.appendSlice(allocator, &.{ base, base + 1, base + 2, base, base + 2, base + 3 }) catch return;
+                        try self.mesh.indices.appendSlice(allocator, &.{ base, base + 1, base + 2, base, base + 2, base + 3 });
                     }
                 }
             }
@@ -333,36 +340,6 @@ pub fn update_mesh_with_overlay(
     }
 
     if (self.mesh.vertices.items.len > 0) {
-        self.mesh.update_wireframe(allocator) catch return;
-        self.mesh.upload();
+        try self.mesh.update_wireframe(allocator);
     }
-}
-
-pub fn set_block(self: *Self, allocator: std.mem.Allocator, pos: za.Vec3_usize, block: Block) void {
-    assert(pos.x() < CHUNK_SIZE);
-    assert(pos.y() < CHUNK_SIZE);
-    assert(pos.z() < CHUNK_SIZE);
-
-    self._blocks[pos.x()][pos.y()][pos.z()] = block;
-
-    self.update_mesh(allocator);
-}
-
-pub fn set_blocks(self: *Self, allocator: std.mem.Allocator, box: BoxI, block: Block) void {
-    const min_x: usize = @intCast(@max(box.min.x(), 0));
-    const min_y: usize = @intCast(@max(box.min.y(), 0));
-    const min_z: usize = @intCast(@max(box.min.z(), 0));
-    const max_x: usize = @intCast(@min(box.max.x(), CHUNK_SIZE));
-    const max_y: usize = @intCast(@min(box.max.y(), CHUNK_SIZE));
-    const max_z: usize = @intCast(@min(box.max.z(), CHUNK_SIZE));
-
-    for (min_x..max_x) |x| {
-        for (min_y..max_y) |y| {
-            for (min_z..max_z) |z| {
-                self._blocks[x][y][z] = block;
-            }
-        }
-    }
-
-    self.update_mesh(allocator);
 }
