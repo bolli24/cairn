@@ -154,6 +154,9 @@ export fn init() void {
     state.terrain = Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
     logStartupSection("terrain generation", &section_timer);
 
+    state.terrain.remesh_all();
+    logStartupSection("terrain meshing", &section_timer);
+
     state.building = BuildingState.init(gpa.allocator());
     state.camera.target_pos = Vec3.new(
         @floatFromInt(terrain_size.x() * Terrain.CHUNK_SIZE / 2),

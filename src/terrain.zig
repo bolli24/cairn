@@ -72,13 +72,6 @@ pub fn generate_with_noise(allocator: std.mem.Allocator, noise: fastnoise.Noise(
             }
         }
     }
-
-    // Remesh all chunks after setting blocks
-    var it = self.chunks.valueIterator();
-    while (it.next()) |chunk_ptr| {
-        chunk_ptr.update_mesh_with_overlay(allocator, &self, null);
-    }
-
     return self;
 }
 
@@ -95,6 +88,13 @@ pub fn deinit(self: *Self) void {
         chunk_ptr.deinit(self.allocator);
     }
     self.chunks.deinit();
+}
+
+pub fn remesh_all(self: *Self) void {
+    var it = self.chunks.valueIterator();
+    while (it.next()) |chunk_ptr| {
+        chunk_ptr.update_mesh_with_overlay(self.allocator, self, null);
+    }
 }
 
 pub fn add_chunk(self: *Self, pos: Vec3_i32) !*Chunk {
