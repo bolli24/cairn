@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const za = @import("zalgebra");
 const Vec3 = za.Vec3;
@@ -34,7 +35,10 @@ const TextureSource = texture_mod.TextureSource;
 const fastnoise = @import("fastnoise");
 
 var gpa: std.heap.DebugAllocator(.{ .thread_safe = true, .stack_trace_frames = 12 }) = .init;
-// var thread_gpa: std.heap.DebugAllocator(.{ .thread_safe = true }) = .init;
+const use_smp_allocator = builtin.mode == .ReleaseFast or builtin.mode == .ReleaseSmall;
+fn appAllocator() std.mem.Allocator {
+    return if (use_smp_allocator) std.heap.smp_allocator else gpa.allocator();
+}
 
 var mesh_workers: std.Io.Threaded = undefined;
 
@@ -62,19 +66,19 @@ const State = struct {
 
     fn deinit(self: *@This()) void {
         for (self.meshes.items) |*mesh| {
-            mesh.deinit(gpa.allocator());
+            mesh.deinit(appAllocator());
         }
-        self.meshes.deinit(gpa.allocator());
+        self.meshes.deinit(appAllocator());
         self.terrain.deinit();
         self.building.deinit();
         self.shapes.deinit();
-        self.terrain_renderer.deinit(gpa.allocator());
+        self.terrain_renderer.deinit(appAllocator());
         self.mesh_renderer.deinit();
         self.shadow_renderer.deinit();
     }
 
     fn add_mesh(self: *@This(), mesh: Mesh) !void {
-        try self.meshes.append(gpa.allocator(), mesh);
+        try self.meshes.append(appAllocator(), mesh);
     }
 };
 
@@ -133,7 +137,7 @@ export fn init() void {
     state.shadow_renderer = render.ShadowRenderer.init(SHADOW_MAP_SIZE);
     logStartupSection("shadow resources", &section_timer);
 
-    const block_texture = texture_mod.loadDdsTexture(gpa.allocator(), block_texture_source, .albedo) catch |err| {
+    const block_texture = texture_mod.loadDdsTexture(appAllocator(), block_texture_source, .albedo) catch |err| {
         std.debug.print("texture load failed: {s}\n", .{@errorName(err)});
         return;
     };
@@ -141,7 +145,7 @@ export fn init() void {
     state.mesh_renderer = render.MeshRenderer.init();
     logStartupSection("texture load", &section_timer);
 
-    mesh_workers = .init(gpa.allocator(), .{});
+    mesh_workers = .init(appAllocator(), .{});
     std.debug.print("Mesh worker threads: {d}\n", .{mesh_workers.async_limit.toInt() orelse 0});
 
     const noise = fastnoise.Noise(f32){
@@ -157,13 +161,13 @@ export fn init() void {
     };
 
     const terrain_size = za.Vec3_usize.new(12, 3, 12);
-    state.terrain = Terrain.generate_with_noise(gpa.allocator(), noise, terrain_size);
+    state.terrain = Terrain.generate_with_noise(appAllocator(), noise, terrain_size);
     logStartupSection("terrain generation", &section_timer);
 
     state.terrain.remesh_all(mesh_workers.io()) catch return;
     logStartupSection("terrain meshing", &section_timer);
 
-    state.building = BuildingState.init(gpa.allocator());
+    state.building = BuildingState.init(appAllocator());
     state.camera.target_pos = Vec3.new(
         @floatFromInt(terrain_size.x() * Terrain.CHUNK_SIZE / 2),
         0.0,
@@ -171,7 +175,7 @@ export fn init() void {
     );
     logStartupSection("building camera init", &section_timer);
 
-    var suzanne = obj.load_mesh_from_obj(gpa.allocator(), "res/suzanne.obj") catch return;
+    var suzanne = obj.load_mesh_from_obj(appAllocator(), "res/suzanne.obj") catch return;
     logStartupSection("obj load", &section_timer);
 
     suzanne.transform.position = Vec3.new(0, 10, 0);
@@ -179,7 +183,7 @@ export fn init() void {
     state.add_mesh(suzanne) catch return;
     logStartupSection("obj upload", &section_timer);
 
-    state.shapes = Shapes.init(&state.camera, gpa.allocator());
+    state.shapes = Shapes.init(&state.camera, appAllocator());
     logStartupSection("shape pipeline", &section_timer);
 
     const total_ms = @as(f64, @floatFromInt(startup_timer.read())) / @as(f64, @floatFromInt(std.time.ns_per_ms));
@@ -387,9 +391,8 @@ export fn cleanup() void {
     mesh_workers.deinit();
     state.deinit();
 
-    const check = gpa.deinit();
-    if (check == .leak) {
-        @panic("memory leak detected");
+    if (!use_smp_allocator) {
+        if (gpa.deinit() == .leak) @panic("memory leak detected");
     }
     sg.shutdown();
 }
