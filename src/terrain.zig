@@ -370,7 +370,7 @@ pub fn raycast(self: *const Self, ray: Ray) ?RaycastHit {
 pub const RemeshStats = struct {
     const SAMPLE_COUNT = 20;
 
-    samples: [SAMPLE_COUNT]u64 = [_]u64{0} ** SAMPLE_COUNT,
+    samples: [SAMPLE_COUNT]u64 = @splat(0),
     next: usize = 0,
     count: usize = 0,
     last_process_nanos: u64 = 0,

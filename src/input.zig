@@ -6,13 +6,13 @@ const sapp = sokol.app;
 
 pub const KeyState = enum { pressed, released, down, up };
 
-const KEY_COUNT = @typeInfo(sapp.Keycode).@"enum".fields.len;
-const MAX_KEY = @typeInfo(sapp.Keycode).@"enum".fields[KEY_COUNT - 1].value;
+const KEY_COUNT = @typeInfo(sapp.Keycode).@"enum".field_names.len;
+const MAX_KEY = @typeInfo(sapp.Keycode).@"enum".field_values[KEY_COUNT - 1];
 
 pub const InputState = struct {
     const Self = @This();
-    keys: [MAX_KEY]KeyState = [_]KeyState{.up} ** MAX_KEY,
-    mouse_buttons: [3]KeyState = [_]KeyState{.up} ** 3,
+    keys: [MAX_KEY]KeyState = @splat(.up),
+    mouse_buttons: [3]KeyState = @splat(.up),
     mouse_pos: Vec2 = Vec2.zero(),
     mouse_delta: Vec2 = Vec2.zero(),
     scroll_delta: Vec2 = Vec2.zero(),
@@ -54,21 +54,21 @@ pub const InputState = struct {
     }
 
     fn getKey(self: *const Self, key: sapp.Keycode) KeyState {
-        return self.keys[@intCast(@intFromEnum(key))];
+        return self.keys[@intCast(@backingInt(key))];
     }
 
     fn getMouse(self: *const Self, btn: sapp.Mousebutton) KeyState {
-        const idx: usize = @intCast(@intFromEnum(btn));
+        const idx: usize = @intCast(@backingInt(btn));
         if (idx >= 3) return .up;
         return self.mouse_buttons[idx];
     }
 
     pub fn setKey(self: *Self, key: sapp.Keycode, s: KeyState) void {
-        self.keys[@intCast(@intFromEnum(key))] = s;
+        self.keys[@intCast(@backingInt(key))] = s;
     }
 
     pub fn setMouse(self: *Self, btn: sapp.Mousebutton, s: KeyState) void {
-        const idx: usize = @intCast(@intFromEnum(btn));
+        const idx: usize = @intCast(@backingInt(btn));
         if (idx >= 3) return;
         self.mouse_buttons[idx] = s;
     }
@@ -111,8 +111,8 @@ pub const InputState = struct {
     }
 
     pub fn reset(self: *Self) void {
-        self.keys = [_]KeyState{.up} ** MAX_KEY;
-        self.mouse_buttons = [_]KeyState{.up} ** 3;
+        self.keys = @splat(.up);
+        self.mouse_buttons = @splat(.up);
         self.mouse_delta = Vec2.zero();
         self.scroll_delta = Vec2.zero();
     }

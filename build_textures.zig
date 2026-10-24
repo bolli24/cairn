@@ -78,11 +78,11 @@ pub fn collectTextures(src_path: []const u8, requests: *TextureRequests, io: std
         0,
     );
     defer allocator.free(source);
-    var tree = try std.zig.Ast.parse(allocator, source, .zig);
+    var tree = try std.zig.Ast.parse(allocator, source, .{ .mode = .zig });
     defer tree.deinit(allocator);
 
     for (tree.nodes.items(.tag), 0..) |tag, i| {
-        const node: std.zig.Ast.Node.Index = @enumFromInt(i);
+        const node: std.zig.Ast.Node.Index = @fromBackingInt(@intCast(i));
 
         var buffer = [1]std.zig.Ast.Node.Index{undefined};
 
@@ -93,8 +93,8 @@ pub fn collectTextures(src_path: []const u8, requests: *TextureRequests, io: std
             if (std.mem.eql(u8, func_name, "TextureSource") and full_node.ast.params.len >= 2) {
                 const path_node = full_node.ast.params[0];
                 const kind_node = full_node.ast.params[1];
-                const path_index = @intFromEnum(path_node);
-                const kind_index = @intFromEnum(kind_node);
+                const path_index = @backingInt(path_node);
+                const kind_index = @backingInt(kind_node);
 
                 if (tree.nodes.items(.tag)[path_index] == .string_literal and
                     tree.nodes.items(.tag)[kind_index] == .enum_literal)

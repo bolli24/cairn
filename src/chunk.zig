@@ -18,7 +18,7 @@ pub const Overlay = std.AutoHashMap(Vec3_i32, *Blocks);
 
 const Self = @This();
 pos: za.Vec3_i32,
-_blocks: [CHUNK_SIZE][CHUNK_SIZE][CHUNK_SIZE]Block = .{.{.{.air} ** CHUNK_SIZE} ** CHUNK_SIZE} ** CHUNK_SIZE,
+_blocks: [CHUNK_SIZE][CHUNK_SIZE][CHUNK_SIZE]Block = @splat(@splat(@splat(.air))),
 mesh: Mesh = .{ .color = .one() },
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {

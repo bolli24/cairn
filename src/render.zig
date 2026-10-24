@@ -4,7 +4,7 @@ const sg = sokol.gfx;
 
 const za = @import("zalgebra");
 const Mat4 = za.Mat4;
-const Vec3 = za.Vec3;  
+const Vec3 = za.Vec3;
 
 const Mesh = @import("mesh.zig");
 const Vertex = Mesh.Vertex;

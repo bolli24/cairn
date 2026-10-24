@@ -16,7 +16,7 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, limit: std.
     };
 }
 
-pub fn openFile(allocator: std.mem.Allocator, path: []const u8, flags: std.Io.File.OpenFlags) !std.Io.File {
+pub fn openFile(allocator: std.mem.Allocator, path: []const u8, flags: std.Io.Dir.OpenFileOptions) !std.Io.File {
     const asset_path = try pathFromExeDir(allocator, path);
     defer allocator.free(asset_path);
 

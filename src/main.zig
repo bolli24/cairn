@@ -35,7 +35,7 @@ const TextureSource = texture_mod.TextureSource;
 const fastnoise = @import("fastnoise");
 
 var gpa: std.heap.DebugAllocator(.{ .thread_safe = true, .stack_trace_frames = 12 }) = .init;
-const use_smp_allocator = builtin.mode == .ReleaseFast or builtin.mode == .ReleaseSmall;
+const use_smp_allocator = builtin.mode == .fast or builtin.mode == .small;
 fn appAllocator() std.mem.Allocator {
     return if (use_smp_allocator) std.heap.smp_allocator else gpa.allocator();
 }
@@ -337,16 +337,6 @@ export fn frame() void {
 
     sg.endPass();
 
-    var pass_action = sg.PassAction{};
-    pass_action.colors[0] = .{
-        .load_action = .LOAD,
-    };
-
-    sg.beginPass(.{
-        .action = pass_action,
-        .swapchain = sglue.swapchain(),
-    });
-
     ig.igSetNextWindowPos(.{ .x = 10, .y = 20 }, ig.ImGuiCond_Once);
     _ = ig.igBegin(
         "debug_text",
@@ -369,7 +359,19 @@ export fn frame() void {
 
     ig.igEnd();
 
-    simgui.render();
+    // simgui.flush() must run outside of a pass, simgui.draw() inside one.
+    simgui.flush();
+
+    var pass_action = sg.PassAction{};
+    pass_action.colors[0] = .{
+        .load_action = .LOAD,
+    };
+
+    sg.beginPass(.{
+        .action = pass_action,
+        .swapchain = sglue.swapchain(),
+    });
+    simgui.draw();
     sg.endPass();
     sg.commit();
 

@@ -25,7 +25,7 @@
     .fingerprint = 0x1ae65068eef4bd5b, // Changing this has security and trust implications.
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
     // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
@@ -33,24 +33,24 @@
     // internet connectivity.
     .dependencies = .{
         .sokol = .{
-            .url = "git+https://github.com/floooh/sokol-zig.git#dcd9e6222aea7a0593a878cd4e52568550c3990f",
-            .hash = "sokol-0.1.0-pb1HKxFoNwDMWI3RMfmL3FQbTNzOArvp-8BGoBj8QOH1",
+            .url = "git+https://github.com/floooh/sokol-zig.git#e83a8223cab570ca4b2ea0701c6c55b4c9a4339b",
+            .hash = "sokol-0.1.0-pb1HK55lQgAb_DfmKMx1A_c9o33Sk91FjcIuo_7eYkYS",
         },
         .zalgebra = .{
-            .url = "git+https://github.com/kooparse/zalgebra.git#a054c778092396b2e714753c56e6114a0826b409",
-            .hash = "zalgebra-0.0.0-aaiVSkF4AQALCVQT0zGV7reBLMtG1tpXlqrDXfnQ0hn_",
+            .url = "git+https://github.com/kooparse/zalgebra.git#b5ebfef29a76fffdf1bc5424ac4c9f49fe323df2",
+            .hash = "zalgebra-0.0.0-aaiVSn6AAQB8nPn_r_w4B679hFolc1a8IjNvSjpQMVzC",
         },
         .fastnoiselite = .{
             .url = "git+https://github.com/akunaakwei/zig-fastnoiselite.git#ace98ed6907a44912450973c7aa7b46ae53ee2d2",
             .hash = "fastnoiselite-1.1.1-u5uILR4HAABIoeBg77lepPYKLC-UVCAFPjsAVPvcR5Ql",
         },
         .zigimg = .{
-            .url = "git+https://github.com/zigimg/zigimg.git#0bbe201a5591219177f2444371c2897746b47774",
-            .hash = "zigimg-0.1.0-8_eo2sGbFwCrsBjkTTP-kinCH62m5vmYDHQnQcngFuwh",
+            .url = "git+https://github.com/zigimg/zigimg.git#083d0304840a3f5fd547c2e2005148a18886c401",
+            .hash = "zigimg-0.1.0-8_eo2j1pGAA3ArMKhXcipNR-tdjmeWmByLJhOff2A_X4",
         },
         .cimgui = .{
-            .url = "git+https://github.com/floooh/dcimgui.git#e2f0e0d93adec02743c55940be23ffe286e857f7",
-            .hash = "cimgui-0.1.0-44ClkR8dmgDqqnfloyLE1bUAtl4zSKTT1wxaHSEC0ikV",
+            .url = "git+https://github.com/floooh/dcimgui.git#b5c946894651f3e12dbf9ae04c245e13424e0444",
+            .hash = "cimgui-0.1.0-44ClkVBEnAA-LAAR9o0cUrN7CsKHR5hsMj-Byh7sFJLK",
         },
         .bc7enc = .{
             .url = "git+https://github.com/richgel999/bc7enc.git#f66c2e489b07138f2673a2fb3d27c1aa1d565c48",
