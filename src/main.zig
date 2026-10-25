@@ -37,6 +37,9 @@ const fastnoise = @import("fastnoise");
 var gpa: std.heap.DebugAllocator(.{ .thread_safe = true, .stack_trace_frames = 12 }) = .init;
 const use_smp_allocator = builtin.mode == .fast or builtin.mode == .small;
 fn appAllocator() std.mem.Allocator {
+    // Zig's page allocator grows wasm memory behind emscripten's malloc, so the
+    // web build must allocate through libc (emmalloc).
+    if (builtin.os.tag == .emscripten) return std.heap.c_allocator;
     return if (use_smp_allocator) std.heap.smp_allocator else gpa.allocator();
 }
 
@@ -83,6 +86,9 @@ const State = struct {
 };
 
 var state: State = .{};
+// Set at the end of init. If init bails out early, frame and cleanup must not
+// touch the partially initialized state.
+var initialized = false;
 
 const Timer = struct {
     start_time: std.Io.Clock.Timestamp,
@@ -137,7 +143,7 @@ export fn init() void {
     state.shadow_renderer = render.ShadowRenderer.init(SHADOW_MAP_SIZE);
     logStartupSection("shadow resources", &section_timer);
 
-    const block_texture = texture_mod.loadDdsTexture(appAllocator(), block_texture_source, .albedo) catch |err| {
+    const block_texture = texture_mod.loadTexture(appAllocator(), block_texture_source, .albedo) catch |err| {
         std.debug.print("texture load failed: {s}\n", .{@errorName(err)});
         return;
     };
@@ -188,9 +194,12 @@ export fn init() void {
 
     const total_ms = @as(f64, @floatFromInt(startup_timer.read())) / @as(f64, @floatFromInt(std.time.ns_per_ms));
     std.debug.print("startup total: {d:.2} ms\n", .{total_ms});
+    initialized = true;
 }
 
 export fn frame() void {
+    if (!initialized) return;
+
     var frame_timer = Timer.start() catch unreachable;
     const t = @as(f32, @floatCast(sapp.frameDuration()));
 
@@ -386,10 +395,20 @@ export fn event_handler(maybe_event: [*c]const sapp.Event) void {
     const event = maybe_event.*;
     state.input.handle_event(event);
 
-    _ = simgui.handleEvent(maybe_event.*);
+    // On the web, key events bubble up to the browser (html5.bubble_key_events)
+    // so shortcuts like F5 and F12 keep working. Keys the app uses for itself, and
+    // events ImGui wants (e.g. typing into a text field), are consumed instead.
+    // consumeEvent is a no-op on native.
+    if (simgui.handleEvent(event)) sapp.consumeEvent();
+    if (event.type == .KEY_DOWN or event.type == .KEY_UP) switch (event.key_code) {
+        .F1, .F2, .F3, .LEFT_ALT, .ESCAPE => sapp.consumeEvent(),
+        else => {},
+    };
 }
 
 export fn cleanup() void {
+    if (!initialized) return;
+
     mesh_workers.deinit();
     state.deinit();
 
@@ -409,6 +428,7 @@ pub fn main() void {
         .height = 1080,
         .window_title = "voxel_zig",
         .logger = .{ .func = slog.func },
+        .html5 = .{ .bubble_key_events = true },
     });
 }
 

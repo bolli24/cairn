@@ -33,6 +33,7 @@ pub fn addTextureBuildSteps(
     compressor: *std.Build.Step.Compile,
     src_dir: []const u8,
     res_dir: []const u8,
+    generated: *std.Build.Step.WriteFile,
 ) !void {
     const requests = try collectAll(src_dir, b.graph.io, b.allocator);
 
@@ -48,6 +49,7 @@ pub fn addTextureBuildSteps(
 
         const installed_path = b.fmt("res/{s}", .{output_rel_path});
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(output, .prefix, installed_path).step);
+        _ = generated.addCopyFile(output, output_rel_path);
     }
 }
 

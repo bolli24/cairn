@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) !void {
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
-    const target = b.standardTargetOptions(.{});
+    const target = webSimdTarget(b, b.standardTargetOptions(.{}));
     // Standard optimization options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
@@ -130,68 +130,79 @@ pub fn build(b: *std.Build) !void {
     var shadow_shader_module = try createShaderModule(b, dep_sokol, "src/shadow.glsl");
     shadow_shader_module.addImport("zalgebra", dep_zalgebra.module("zalgebra"));
 
-    try tex.addTextureBuildSteps(b, bc7enc, "src", "res");
+    // Runtime assets for the web bundle: the generated textures plus the files in res/.
+    const web_res = b.addWriteFiles();
+    try tex.addTextureBuildSteps(b, bc7enc, "src", "res", web_res);
 
-    const exe = b.addExecutable(.{
-        .name = "voxel_zig",
-        .root_module = b.createModule(.{
-            // b.createModule defines a new module just like b.addModule but,
-            // unlike b.addModule, it does not expose the module to consumers of
-            // this package, which is why in this case we don't have to give it a name.
-            .root_source_file = b.path("src/main.zig"),
-            // Target and optimization levels must be explicitly wired in when
-            // defining an executable or library (in the root module), and you
-            // can also hardcode a specific target for an executable or library
-            // definition if desireable (e.g. firmware for embedded devices).
-            .target = target,
-            .optimize = optimize,
-            // List of modules available for import in source files part of the
-            // root module.
-            .imports = &.{
-                .{
-                    .name = "sokol",
-                    .module = dep_sokol.module("sokol"),
-                },
-                .{
-                    .name = cimgui_conf.module_name,
-                    .module = dep_cimgui.module(cimgui_conf.module_name),
-                },
-
-                .{
-                    .name = "zalgebra",
-                    .module = dep_zalgebra.module("zalgebra"),
-                },
-                .{
-                    .name = "fastnoise",
-                    .module = dep_fastnoise.module("fastnoise"),
-                },
-                .{
-                    .name = "zigimg",
-                    .module = dep_zigimg.module("zigimg"),
-                },
-                .{
-                    .name = "terrain_shader",
-                    .module = terrain_shader_module,
-                },
-                .{
-                    .name = "mesh_shader",
-                    .module = mesh_shader_module,
-                },
-                .{
-                    .name = "line_shader",
-                    .module = line_shader_module,
-                },
-                .{
-                    .name = "shadow_shader",
-                    .module = shadow_shader_module,
-                },
+    const exe_mod = b.createModule(.{
+        // b.createModule defines a new module just like b.addModule but,
+        // unlike b.addModule, it does not expose the module to consumers of
+        // this package, which is why in this case we don't have to give it a name.
+        .root_source_file = b.path("src/main.zig"),
+        // Target and optimization levels must be explicitly wired in when
+        // defining an executable or library (in the root module), and you
+        // can also hardcode a specific target for an executable or library
+        // definition if desireable (e.g. firmware for embedded devices).
+        .target = target,
+        .optimize = optimize,
+        // List of modules available for import in source files part of the
+        // root module.
+        .imports = &.{
+            .{
+                .name = "sokol",
+                .module = dep_sokol.module("sokol"),
             },
-        }),
+            .{
+                .name = cimgui_conf.module_name,
+                .module = dep_cimgui.module(cimgui_conf.module_name),
+            },
+
+            .{
+                .name = "zalgebra",
+                .module = dep_zalgebra.module("zalgebra"),
+            },
+            .{
+                .name = "fastnoise",
+                .module = dep_fastnoise.module("fastnoise"),
+            },
+            .{
+                .name = "zigimg",
+                .module = dep_zigimg.module("zigimg"),
+            },
+            .{
+                .name = "terrain_shader",
+                .module = terrain_shader_module,
+            },
+            .{
+                .name = "mesh_shader",
+                .module = mesh_shader_module,
+            },
+            .{
+                .name = "line_shader",
+                .module = line_shader_module,
+            },
+            .{
+                .name = "shadow_shader",
+                .module = shadow_shader_module,
+            },
+        },
     });
 
     const mod_options = b.addOptions();
     mod_options.addOption(bool, "docking", opt_docking);
-    exe.root_module.addOptions("build_options", mod_options);
+    exe_mod.addOptions("build_options", mod_options);
+
+    // The web build compiles the Zig code into a static library which is then
+    // linked by emcc into a .html/.js/.wasm bundle in zig-out/web.
+    if (target.result.os.tag == .emscripten) {
+        try buildWeb(b, exe_mod, dep_sokol, dep_cimgui, cimgui_conf.clib_name, web_res, optimize);
+        return;
+    }
+
+    const exe = b.addExecutable(.{
+        .name = "voxel_zig",
+        .root_module = exe_mod,
+    });
 
     // On NixOS, Zig's linker can't resolve transitive shared library deps
     // from static archives. Building sokol as a dynamic lib avoids this.
@@ -282,6 +293,94 @@ pub fn build(b: *std.Build) !void {
     //
     // Lastly, the Zig build system is relatively simple and self-contained,
     // and reading its source code will allow you to master it.
+}
+
+// All current browsers support wasm SIMD, so the web build always enables it.
+// The target is shared with the dependencies, so their C code gets it too.
+fn webSimdTarget(b: *std.Build, target: std.Build.ResolvedTarget) std.Build.ResolvedTarget {
+    if (target.result.os.tag != .emscripten) return target;
+    var query = target.query;
+    query.cpu_features_add.addFeature(@backingInt(std.Target.wasm.Feature.simd128));
+    return b.resolveTargetQuery(query);
+}
+
+fn buildWeb(
+    b: *std.Build,
+    exe_mod: *std.Build.Module,
+    dep_sokol: *std.Build.Dependency,
+    dep_cimgui: *std.Build.Dependency,
+    cimgui_clib_name: []const u8,
+    web_res: *std.Build.Step.WriteFile,
+    optimize: std.builtin.OptimizeMode,
+) !void {
+    const lib = b.addLibrary(.{
+        .name = "voxel_zig",
+        .root_module = exe_mod,
+    });
+
+    // The emsdk is a dependency of sokol and must be installed once with
+    // `zig build -Dtarget=wasm32-emscripten install-emsdk` before building.
+    const dep_emsdk = dep_sokol.builder.dependency("emsdk", .{});
+    b.step("install-emsdk", "Install the Emscripten SDK").dependOn(sokol.emSdkInstallStep(b, dep_emsdk, .{}));
+
+    // cimgui's C sources need the emscripten sysroot headers.
+    const cimgui_clib = dep_cimgui.artifact(cimgui_clib_name);
+    cimgui_clib.root_module.addSystemIncludePath(dep_emsdk.path("upstream/emscripten/cache/sysroot/include"));
+
+    // The source PNGs are included as a fallback for GPUs without BC7 support.
+    _ = web_res.addCopyDirectory(b.path("res"), "", .{});
+
+    const link_step = emLinkStep(b, lib, dep_emsdk, optimize, dep_sokol.path("src/sokol/web/shell.html"), web_res.getDirectory());
+    b.getInstallStep().dependOn(&link_step.step);
+
+    // `zig build run` serves the bundle via emrun and opens it in a browser.
+    const run_web = sokol.emRunStep(b, .{ .name = "voxel_zig", .emsdk = dep_emsdk });
+    run_web.step.dependOn(&link_step.step);
+    const run_step = b.step("run", "Run the app in a browser");
+    run_step.dependOn(&run_web.step);
+}
+
+// Based on sokol.emLinkStep, which can't take generated paths as extra arguments.
+// The assets are packed into voxel_zig.data and mounted at /res when the page loads.
+fn emLinkStep(
+    b: *std.Build,
+    lib: *std.Build.Step.Compile,
+    dep_emsdk: *std.Build.Dependency,
+    optimize: std.builtin.OptimizeMode,
+    shell_file: std.Build.LazyPath,
+    res_dir: std.Build.LazyPath,
+) *std.Build.Step.InstallDir {
+    const emcc = b.addRunFile(sokol.emTool(b, dep_emsdk, "emcc"));
+    emcc.setName("emcc");
+    if (optimize == .debug) {
+        emcc.addArgs(&.{ "-g", "-Og", "-sSAFE_HEAP=1", "-sSTACK_OVERFLOW_CHECK=1" });
+    } else {
+        emcc.addArgs(&.{ "-sASSERTIONS=0", "-flto", "--closure", "1" });
+        emcc.addArg(if (optimize == .small) "-Oz" else "-O3");
+    }
+    emcc.addArgs(&.{ "-sUSE_WEBGL2=1", "-sMALLOC='emmalloc'", "-sALLOW_MEMORY_GROWTH=1" });
+    emcc.addPrefixedFileArg("--shell-file=", shell_file);
+    emcc.addArg("--preload-file");
+    emcc.addDirectoryArg2(res_dir, .{ .suffix = "@/res" });
+
+    // the main lib, followed by the C libraries it depends on
+    emcc.addArtifactArg(lib);
+    for (lib.getCompileDependencies(false)) |item| {
+        if (item.kind == .lib and item != lib) {
+            emcc.addArtifactArg(item);
+        }
+    }
+    emcc.addArg("-o");
+    const out_file = emcc.addOutputFileArg(b.fmt("{s}.html", .{lib.name}));
+
+    // emcc writes the .html, .js, .wasm and .data files next to each other
+    const install = b.addInstallDirectory(.{
+        .source_dir = out_file.dirname(),
+        .install_dir = .prefix,
+        .install_subdir = "web",
+    });
+    install.step.dependOn(&emcc.step);
+    return install;
 }
 
 fn createShaderModule(b: *std.Build, dep_sokol: *std.Build.Dependency, comptime glsl_path: []const u8) !*std.Build.Module {
