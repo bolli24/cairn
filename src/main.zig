@@ -29,6 +29,7 @@ const render = @import("render.zig");
 const input = @import("input.zig");
 const InputState = input.InputState;
 const BuildingState = @import("building.zig").BuildingState;
+const BrushState = @import("brush.zig").BrushState;
 const texture_mod = @import("texture.zig");
 const TextureSource = texture_mod.TextureSource;
 
@@ -49,7 +50,10 @@ const SHADOW_MAP_SIZE: i32 = 4096;
 
 const block_texture_source = TextureSource("p.png", .albedo);
 
+pub const Mode = enum { view, building, brush };
+
 const State = struct {
+    mode: Mode = .view,
     rx: f32 = 0.0,
     ry: f32 = 0.0,
     wireframe: bool = false,
@@ -63,6 +67,7 @@ const State = struct {
     ambient_occlusion_enabled: bool = true,
     shapes: Shapes = undefined,
     building: BuildingState = undefined,
+    brush: BrushState = undefined,
     terrain_renderer: render.TerrainRenderer = .{},
     mesh_renderer: render.MeshRenderer = .{},
     shadow_renderer: render.ShadowRenderer = .{},
@@ -74,6 +79,7 @@ const State = struct {
         self.meshes.deinit(appAllocator());
         self.terrain.deinit();
         self.building.deinit();
+        self.brush.deinit();
         self.shapes.deinit();
         self.terrain_renderer.deinit(appAllocator());
         self.mesh_renderer.deinit();
@@ -82,6 +88,22 @@ const State = struct {
 
     fn add_mesh(self: *@This(), mesh: Mesh) !void {
         try self.meshes.append(appAllocator(), mesh);
+    }
+
+    fn set_mode(self: *@This(), mode: Mode) void {
+        if (self.mode == mode) return;
+        if (self.mode == .building) {
+            self.building.exit(&self.terrain) catch |err| {
+                std.debug.print("ERROR: Could not exit building mode: {s}\n", .{@errorName(err)});
+                return;
+            };
+        }
+        self.mode = mode;
+    }
+
+    /// Switch to `mode`, or back to view if it is already active.
+    fn toggle_mode(self: *@This(), mode: Mode) void {
+        self.set_mode(if (self.mode == mode) .view else mode);
     }
 };
 
@@ -174,12 +196,13 @@ export fn init() void {
     logStartupSection("terrain meshing", &section_timer);
 
     state.building = BuildingState.init(appAllocator());
+    state.brush = BrushState.init(appAllocator());
     state.camera.target_pos = Vec3.new(
         @floatFromInt(terrain_size.x() * Terrain.CHUNK_SIZE / 2),
         0.0,
         @floatFromInt(terrain_size.z() * Terrain.CHUNK_SIZE / 2),
     );
-    logStartupSection("building camera init", &section_timer);
+    logStartupSection("building, brush, camera init", &section_timer);
 
     var suzanne = obj.load_mesh_from_obj(appAllocator(), "res/suzanne.obj") catch return;
     logStartupSection("obj load", &section_timer);
@@ -201,7 +224,7 @@ export fn frame() void {
     if (!initialized) return;
 
     var frame_timer = Timer.start() catch unreachable;
-    const t = @as(f32, @floatCast(sapp.frameDuration()));
+    const dt = @as(f32, @floatCast(sapp.frameDuration()));
 
     // call simgui.newFrame() before any ImGui calls
     simgui.newFrame(.{
@@ -217,7 +240,11 @@ export fn frame() void {
     }
     sgimgui.draw();
 
-    state.camera.update(t, &state.input, &state.terrain);
+    if (state.input.key_pressed(.B)) state.toggle_mode(.building);
+    if (state.input.key_pressed(.G)) state.toggle_mode(.brush);
+    if (state.input.key_pressed(.ESCAPE)) state.set_mode(.view);
+
+    state.camera.update(dt, &state.input, &state.terrain, state.mode);
 
     if (state.input.key_pressed(.F1)) {
         state.wireframe = !state.wireframe;
@@ -235,12 +262,14 @@ export fn frame() void {
         state.show_light_rays = !state.show_light_rays;
     }
 
-    state.building.update(&state.input, &state.camera, &state.terrain, &state.shapes);
-
-    if (!state.building.active and state.input.mouse_pressed(.LEFT)) {
-        if (state.terrain.raycast(state.camera.screen_to_ray(state.input.mouse_pos, 500))) |hit| {
-            state.terrain.set_block(hit.previous, .ground) catch return;
-        }
+    switch (state.mode) {
+        .view => if (state.input.mouse_pressed(.LEFT)) {
+            if (state.terrain.raycast(state.camera.screen_to_ray(state.input.mouse_pos, 500))) |hit| {
+                state.terrain.set_block(hit.previous, .ground) catch return;
+            }
+        },
+        .building => state.building.update(&state.input, &state.camera, &state.terrain, &state.shapes),
+        .brush => state.brush.update(&state.input, &state.camera, &state.terrain, &state.shapes, dt),
     }
 
     state.terrain.remesh_dirty(mesh_workers.io()) catch return;
@@ -261,7 +290,7 @@ export fn frame() void {
     for (state.meshes.items) |*mesh| {
         state.shadow_renderer.draw(mesh, model_matrix(mesh));
     }
-    if (state.building.active and state.building.mesh_segment_count > 0) {
+    if (state.mode == .building and state.building.mesh_segment_count > 0) {
         state.shadow_renderer.draw(&state.building.mesh, model_matrix(&state.building.mesh));
     }
     sg.endPass();
@@ -306,7 +335,7 @@ export fn frame() void {
         );
     }
 
-    if (state.building.active and state.building.mesh_segment_count > 0) {
+    if (state.mode == .building and state.building.mesh_segment_count > 0) {
         state.mesh_renderer.draw(
             &state.building.mesh,
             model_matrix(&state.building.mesh),
@@ -352,10 +381,11 @@ export fn frame() void {
         null,
         ig.ImGuiWindowFlags_NoBackground | ig.ImGuiWindowFlags_NoDecoration | ig.ImGuiWindowFlags_NoInputs | ig.ImGuiWindowFlags_AlwaysAutoResize,
     );
-    ig.igText("%4.1f fps \t %4.1f ms", 1 / t, t * 1000);
+    ig.igText("%4.1f fps \t %4.1f ms", 1 / dt, dt * 1000);
+    ig.igText("mode: %s", @tagName(state.mode).ptr);
     ig.igText("chunk remesh avg: %.3f ms", Terrain.remesh_stats.average_ms());
     ig.igText("last remesh total: %.3f ms (%d chunks)", Terrain.remesh_stats.last_process_ms(), Terrain.remesh_stats.last_process_chunks);
-    if (state.building.active) {
+    if (state.mode == .building) {
         const mesh = &state.building.mesh;
         ig.igText(
             "%i segments, %i vertices, %i triangles, %.1f",

@@ -16,6 +16,7 @@ const Terrain = @import("terrain.zig");
 const Ray = Terrain.Ray;
 const Transform = Mesh.Transform;
 const InputState = @import("input.zig").InputState;
+const Mode = @import("main.zig").Mode;
 
 const MAX_PAN_SPEED: f32 = 100.0;
 const MOUSE_ROTATION_SPEED: f32 = 0.2; // degrees per pixel
@@ -37,13 +38,13 @@ pub const Camera = struct {
 
     transform: Transform = .{},
 
-    pub fn update(self: *Self, dt: f32, input: *const InputState, terrain: *const Terrain) void {
+    pub fn update(self: *Self, dt: f32, input: *const InputState, terrain: *const Terrain, mode: Mode) void {
         if (input.mouse_pressed(.MIDDLE) or input.key_pressed(.LEFT_ALT)) {
             self.lockOrbitTarget(terrain);
         }
 
         // Zoom
-        const distance_change = getDistanceChange(input);
+        const distance_change = getDistanceChange(input, mode);
         self.target_distance += distance_change * ZOOM_SPEED * self.target_distance;
         self.target_distance = @max(self.target_distance, 1.0);
 
@@ -73,11 +74,14 @@ pub const Camera = struct {
         }
     }
 
-    fn getDistanceChange(input: *const InputState) f32 {
+    fn getDistanceChange(input: *const InputState, mode: Mode) f32 {
         var change: f32 = 0.0;
         if (input.key_down(.MINUS)) change += 1.0;
         if (input.key_down(.EQUAL)) change -= 1.0;
-        change -= input.scroll_delta.y() * MOUSE_ZOOM_MULTIPLIER;
+
+        if (!(mode == .brush and input.key_down(.LEFT_SHIFT))) {
+            change -= input.scroll_delta.y() * MOUSE_ZOOM_MULTIPLIER;
+        }
         return change;
     }
 

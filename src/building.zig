@@ -46,7 +46,6 @@ const CAP_INDEX_COUNT: usize = 2 * 3 * 2; // 2 triangles per cap, 2 caps
 pub const BuildingState = struct {
     const Self = @This();
 
-    active: bool = false,
     pos1: ?Vec3_i32 = null,
     pos2: ?Vec3_i32 = null,
     prev_hit: ?Vec3_i32 = null,
@@ -99,31 +98,13 @@ pub const BuildingState = struct {
         try self.mesh.indices.appendSlice(self.allocator, &indices);
     }
 
+    /// Revert any applied preview and reset placement. Call when leaving building mode.
+    pub fn exit(self: *Self, terrain: *Terrain) !void {
+        try self.revert_preview(terrain);
+        self.reset();
+    }
+
     pub fn update(self: *Self, input: *InputState, camera: *const Camera, terrain: *Terrain, shapes: *Shapes) void {
-        if (input.key_pressed(.B)) {
-            if (self.active) {
-                self.revert_preview(terrain) catch |err| {
-                    std.debug.print("ERROR: Could not hide preview: {s}\n", .{@errorName(err)});
-                    return;
-                };
-            }
-            self.active = !self.active;
-            self.reset();
-            return;
-        }
-
-        if (!self.active) return;
-
-        if (input.key_pressed(.ESCAPE)) {
-            self.revert_preview(terrain) catch |err| {
-                std.debug.print("ERROR: Could not hide preview: {s}\n", .{@errorName(err)});
-                return;
-            };
-            self.active = false;
-            self.reset();
-            return;
-        }
-
         const hit = terrain.raycast(camera.screen_to_ray(input.mouse_pos, 500));
 
         if (self.pos1 == null) {
