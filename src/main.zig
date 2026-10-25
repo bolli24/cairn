@@ -426,7 +426,7 @@ pub fn main() void {
         .cleanup_cb = cleanup,
         .width = 1920,
         .height = 1080,
-        .window_title = "voxel_zig",
+        .window_title = "cairn",
         .logger = .{ .func = slog.func },
         .html5 = .{ .bubble_key_events = true },
     });

@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) !void {
     // to our consumers. We must give it a name because a Zig package can expose
     // multiple modules and consumers will need to be able to specify which
     // module they want to access.
-    const mod = b.addModule("voxel_zig", .{
+    const mod = b.addModule("cairn", .{
         // The root source file is the "entry point" of this module. Users of
         // this module will only be able to access public declarations contained
         // in this file, which means that if you have declarations that you
@@ -200,7 +200,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     const exe = b.addExecutable(.{
-        .name = "voxel_zig",
+        .name = "cairn",
         .root_module = exe_mod,
     });
 
@@ -314,7 +314,7 @@ fn buildWeb(
     optimize: std.builtin.OptimizeMode,
 ) !void {
     const lib = b.addLibrary(.{
-        .name = "voxel_zig",
+        .name = "cairn",
         .root_module = exe_mod,
     });
 
@@ -334,14 +334,14 @@ fn buildWeb(
     b.getInstallStep().dependOn(&link_step.step);
 
     // `zig build run` serves the bundle via emrun and opens it in a browser.
-    const run_web = sokol.emRunStep(b, .{ .name = "voxel_zig", .emsdk = dep_emsdk });
+    const run_web = sokol.emRunStep(b, .{ .name = "cairn", .emsdk = dep_emsdk });
     run_web.step.dependOn(&link_step.step);
     const run_step = b.step("run", "Run the app in a browser");
     run_step.dependOn(&run_web.step);
 }
 
 // Based on sokol.emLinkStep, which can't take generated paths as extra arguments.
-// The assets are packed into voxel_zig.data and mounted at /res when the page loads.
+// The assets are packed into cairn.data and mounted at /res when the page loads.
 fn emLinkStep(
     b: *std.Build,
     lib: *std.Build.Step.Compile,
